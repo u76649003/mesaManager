@@ -147,7 +147,7 @@ export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
       </aside>
 
       {/* Mobile Bottom Navigation (hidden on desktop) */}
-      <div className="fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 z-[9999] flex items-center justify-around md:hidden px-2 pb-safe shadow-[0_-4px_16px_rgba(0,0,0,0.2)] text-white">
+      <div className="fixed bottom-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-lg border-t border-slate-200 z-[9999] flex items-center justify-around md:hidden px-2 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.06)] text-slate-800">
         {NAV_ITEMS.map(({ icon: Icon, label, id, href }) => {
           const isActive = activeNav === id;
           return (
@@ -155,12 +155,19 @@ export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
               key={id}
               href={href}
               className={cn(
-                'flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-all',
-                isActive ? 'text-blue-400 font-black scale-105' : 'text-slate-400 font-bold hover:text-white'
+                'flex flex-col items-center justify-center gap-1 flex-1 py-1 transition-all relative',
+                isActive ? 'text-blue-600' : 'text-slate-450 hover:text-slate-900'
               )}
             >
-              <Icon size={20} className={cn("transition-transform")} />
-              <span className="text-[10px] tracking-tight">{label}</span>
+              {isActive && (
+                <motion.div
+                  layoutId="mobileNavActive"
+                  className="absolute -top-1 w-10 h-1 bg-blue-600 rounded-full"
+                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                />
+              )}
+              <Icon size={20} className={cn("transition-transform", isActive ? "scale-110" : "")} />
+              <span className="text-[9px] tracking-tight font-black uppercase">{label}</span>
             </Link>
           );
         })}

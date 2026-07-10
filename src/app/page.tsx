@@ -395,7 +395,8 @@ export default function DashboardPage() {
 
         {/* Vista dividida: Lista izquierda + Canvas derecho */}
         <div className="dashboard-split flex-1 overflow-hidden">
-          <div className={cn("h-full md:block flex-col overflow-hidden", activeView === 'list' ? "flex" : "hidden")}>
+          {/* Columna 1: Lista de Reservas (Izquierda en PC, pestaña en Móvil) */}
+          <div className={cn("h-full flex-col overflow-hidden", activeView === 'list' ? "flex" : "hidden md:flex")}>
             <ReservationList
               onReservationClick={(res) => {
                 if (res.table_id) {
@@ -408,7 +409,10 @@ export default function DashboardPage() {
                 }
               }}
             />
-              <div className={cn("md:flex flex-col p-1.5 md:p-3 gap-2 md:gap-3 overflow-hidden flex-1", activeView === 'map' ? "flex" : "hidden")}>
+          </div>
+
+          {/* Columna 2: Plano de Sala y Mandos (Derecha en PC, pestaña en Móvil) */}
+          <div className={cn("flex-col p-1.5 md:p-3 gap-2 md:gap-3 overflow-hidden flex-1", activeView === 'map' ? "flex" : "hidden md:flex")}>
             {/* Cabecera del plano con Leyenda y Selector de Horas (Timeline) */}
             <div className="flex flex-col gap-1.5 md:gap-3 bg-white border-2 border-slate-200 p-2 md:p-3.5 rounded-3xl shadow-sm">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-1.5 md:gap-3 border-b border-slate-200 pb-1.5 md:pb-2">
@@ -527,7 +531,6 @@ export default function DashboardPage() {
                   ));
                 })()}
               </div>
-            </div>
             </div>
 
             {/* Canvas del plano */}
