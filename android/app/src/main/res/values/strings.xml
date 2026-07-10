@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MesaManager</string>
+    <string name="title_activity_main">MesaManager</string>
+    <string name="package_name">com.mesamanager.app</string>
+    <string name="custom_url_scheme">com.mesamanager.app</string>
+</resources>
