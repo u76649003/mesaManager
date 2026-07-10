@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'MesaManager',
   webDir: 'public',
   server: {
-    url: 'https://mesa-manager-738a5y91c-justojgds-projects.vercel.app',
+    url: 'https://mesa-manager.vercel.app/',
     cleartext: true
   }
 };
