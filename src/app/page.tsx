@@ -408,26 +408,26 @@ export default function DashboardPage() {
                 }
               }}
             />
-          </div>
-
-          <div className={cn("md:flex flex-col p-3 gap-3 overflow-hidden flex-1", activeView === 'map' ? "flex" : "hidden")}>
+              <div className={cn("md:flex flex-col p-1.5 md:p-3 gap-2 md:gap-3 overflow-hidden flex-1", activeView === 'map' ? "flex" : "hidden")}>
             {/* Cabecera del plano con Leyenda y Selector de Horas (Timeline) */}
-            <div className="flex flex-col gap-3 bg-white border-2 border-slate-200 p-3.5 rounded-3xl shadow-sm">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-200 pb-2">
-                <StatusLegend />
-                <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-col gap-1.5 md:gap-3 bg-white border-2 border-slate-200 p-2 md:p-3.5 rounded-3xl shadow-sm">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-1.5 md:gap-3 border-b border-slate-200 pb-1.5 md:pb-2">
+                <div className="hidden lg:block">
+                  <StatusLegend />
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 md:gap-3 justify-between md:justify-start">
                   {/* Filtro de Turno (Todo el día / Medio día / Noche) */}
-                  <div className="flex rounded-xl bg-slate-100 p-1 gap-1 border border-slate-200 shadow-inner">
+                  <div className="flex rounded-xl bg-slate-100 p-0.5 md:p-1 gap-1 border border-slate-200 shadow-inner">
                     <button
                       onClick={() => {
                         setSelectedShift(null);
                         setSelectedTime(null);
                       }}
                       className={cn(
-                        "px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer",
+                        "px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-black rounded-lg transition-all cursor-pointer",
                         selectedShiftId === null
                           ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-600 hover:text-slate-950"
+                          : "text-slate-650 hover:text-slate-950"
                       )}
                     >
                       Todo el día
@@ -439,10 +439,10 @@ export default function DashboardPage() {
                         setSelectedTime(null);
                       }}
                       className={cn(
-                        "px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer",
+                        "px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-black rounded-lg transition-all cursor-pointer",
                         selectedShiftId === getShiftIdByPeriod('lunch')
                           ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-600 hover:text-slate-950"
+                          : "text-slate-650 hover:text-slate-950"
                       )}
                     >
                       Medio día
@@ -454,10 +454,10 @@ export default function DashboardPage() {
                         setSelectedTime(null);
                       }}
                       className={cn(
-                        "px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer",
+                        "px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-black rounded-lg transition-all cursor-pointer",
                         selectedShiftId === getShiftIdByPeriod('dinner')
                           ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-600 hover:text-slate-950"
+                          : "text-slate-650 hover:text-slate-950"
                       )}
                     >
                       Noche
@@ -466,25 +466,25 @@ export default function DashboardPage() {
 
                   <div className="hidden lg:block h-6 w-px bg-slate-250" />
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Visualizar hora:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-wider hidden sm:inline">Visualizar hora:</span>
                     <button
                       onClick={() => setSelectedTime(null)}
                       className={cn(
-                        "px-3.5 py-1.5 rounded-xl text-xs font-black border-2 transition-all cursor-pointer",
+                        "px-2.5 md:px-3.5 py-1 md:py-1.5 rounded-xl text-[10px] md:text-xs font-black border-2 transition-all cursor-pointer",
                         selectedTime === null
                           ? "bg-emerald-600 border-emerald-600 text-white shadow-sm"
                           : "bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-950"
                       )}
                     >
-                      ⏰ Tiempo Real
+                      ⏰ {selectedTime === null ? 'Tiempo Real' : 'Restablecer'}
                     </button>
                   </div>
                 </div>
               </div>
 
               {/* Selector de Horas del Turno (Timeline Scrollable) */}
-              <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-1.5">
                 {(() => {
                   const slots = getTimeSlots();
                   const groups: Record<string, typeof slots> = {};
@@ -494,13 +494,13 @@ export default function DashboardPage() {
                   });
 
                   return Object.entries(groups).map(([shiftName, shiftSlots]) => (
-                    <div key={shiftName} className="flex flex-col gap-1">
+                    <div key={shiftName} className="flex flex-col gap-0.5">
                       {selectedShiftId === null && (
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider pl-1.5">
+                        <span className="text-[8px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider pl-1.5 hidden md:block">
                           Turno {shiftName}
                         </span>
                       )}
-                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                      <div className="flex items-center gap-1 md:gap-1.5 overflow-x-auto pb-0.5 md:pb-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
                         {shiftSlots.map((slot) => {
                           const isActive = selectedTime === slot.time;
                           return (
@@ -508,7 +508,7 @@ export default function DashboardPage() {
                               key={slot.time}
                               onClick={() => setSelectedTime(slot.time)}
                               className={cn(
-                                "px-3.5 py-1.5 rounded-xl border text-xs font-bold transition-all shrink-0 flex items-center gap-1.5",
+                                "px-2.5 md:px-3.5 py-1 md:py-1.5 rounded-xl border text-[10px] md:text-xs font-bold transition-all shrink-0 flex items-center gap-1 md:gap-1.5",
                                 isActive
                                   ? "bg-blue-600 border-blue-650 text-white shadow-md cursor-pointer border-2"
                                   : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-950 cursor-pointer border-2"
@@ -527,6 +527,7 @@ export default function DashboardPage() {
                   ));
                 })()}
               </div>
+            </div>
             </div>
 
             {/* Canvas del plano */}
