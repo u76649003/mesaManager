@@ -389,9 +389,45 @@ export default function SettingsPage() {
         </div>
 
         {/* Tab Selector & Content Split */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* Tabs Sidebar */}
-          <div className="w-64 border-r-2 border-slate-200 p-4 space-y-2 bg-white shrink-0">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+          {/* Mobile Horizontal Tabs Selector */}
+          <div className="flex lg:hidden overflow-x-auto gap-2 p-3 bg-white border-b-2 border-slate-200 shrink-0 scrollbar-none">
+            {[
+              { id: 'general', label: 'General', icon: Building2 },
+              { id: 'rooms', label: 'Salas', icon: Layout },
+              { id: 'tableTypes', label: 'Mesas', icon: Layers },
+              { id: 'shifts', label: 'Turnos', icon: Clock },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id as any);
+                    setIsAddingRoom(false);
+                    setIsAddingType(false);
+                    setIsAddingShift(false);
+                    setEditingRoom(null);
+                    setEditingType(null);
+                    setEditingShift(null);
+                  }}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black shrink-0 transition-colors border cursor-pointer",
+                    isActive
+                      ? "bg-blue-600 text-white border-blue-650 shadow-sm"
+                      : "bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200"
+                  )}
+                >
+                  <Icon size={13} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Desktop Left Tabs Sidebar */}
+          <div className="hidden lg:flex flex-col w-64 border-r-2 border-slate-200 p-4 space-y-2 bg-white shrink-0">
             {[
               { id: 'general', label: 'General', icon: Building2 },
               { id: 'rooms', label: 'Salas y Espacios', icon: Layout },
@@ -415,7 +451,7 @@ export default function SettingsPage() {
                     'w-full flex items-center justify-between px-3.5 py-3.5 rounded-2xl text-sm font-black transition-all cursor-pointer',
                     activeTab === tab.id
                       ? 'bg-blue-600 text-white shadow-md'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 border-2 border-transparent'
+                      : 'text-slate-650 hover:text-slate-900 hover:bg-slate-100 border-2 border-transparent'
                   )}
                 >
                   <div className="flex items-center gap-3">
