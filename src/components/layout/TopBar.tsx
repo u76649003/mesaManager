@@ -192,9 +192,9 @@ export function TopBar({
   };
 
   return (
-    <header className="flex flex-col md:flex-row gap-3 md:gap-4 px-3 md:px-5 py-3 md:py-4 border-2 border-slate-200 bg-white rounded-3xl shadow-sm flex-shrink-0 z-30 mb-3 md:mb-4">
+    <header className="flex flex-col md:flex-row gap-2 md:gap-4 px-2 md:px-5 py-2 md:py-4 border-2 border-slate-200 bg-white rounded-2xl md:rounded-3xl shadow-sm flex-shrink-0 z-30 mb-2 md:mb-4">
       {/* Left section: Dropdown, Shifts and Stats */}
-      <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full md:w-auto">
+      <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 w-full md:w-auto">
         <div className="flex items-center justify-between w-full md:w-auto gap-2">
           {/* Room Selection Dropdown */}
           <div className="relative">
@@ -340,7 +340,7 @@ export function TopBar({
         <div className="hidden md:block w-[1.5px] h-8 bg-slate-200" />
 
         {/* Stats Grid on Mobile, Flex Row on Desktop */}
-        <div className="grid grid-cols-3 md:flex items-center gap-1.5 md:gap-3 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
+        <div className="hidden md:flex items-center gap-1.5 md:gap-3 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
           <Stat
             icon={<TableProperties size={14} />}
             value={`${occupiedTables}/${totalTables}`}
