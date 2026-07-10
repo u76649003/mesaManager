@@ -334,7 +334,10 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
   // Pan con clic del botón izquierdo en fondo, o botón central/derecho en cualquier lado
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      const isLeftClickOnBackground = e.button === 0 && e.target === canvasRef.current;
+      const target = e.target as HTMLElement;
+      const isInteractive = target.closest('button') || target.closest('svg') || target.closest('input') || target.closest('label');
+      
+      const isLeftClickOnBackground = e.button === 0 && !isInteractive;
       if (isLeftClickOnBackground || e.button === 1 || e.button === 2) {
         e.preventDefault();
         setIsPanning(true);
@@ -359,7 +362,10 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
   // Gestos táctiles de pan y pinch-zoom en móvil
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      const isBackgroundTouch = e.target === canvasRef.current;
+      const target = e.target as HTMLElement;
+      const isInteractive = target.closest('button') || target.closest('svg') || target.closest('input') || target.closest('label');
+      
+      const isBackgroundTouch = !isInteractive;
       const canPan = mode === 'service' || isBackgroundTouch;
 
       if (e.touches.length === 1 && canPan) {
@@ -574,7 +580,7 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onContextMenu={(e) => e.preventDefault()}
-          style={{ minHeight: '500px' }}
+          style={{ minHeight: '500px', touchAction: 'none' }}
         >
           {/* Grid de fondo */}
           <svg
