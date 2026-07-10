@@ -183,16 +183,22 @@ body {
 @media (max-width: 768px) {
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto !important;
+    overflow: auto !important;
   }
   .sidebar {
     display: none !important;
   }
   .main-content {
-    padding-bottom: 76px !important;
+    padding-bottom: 90px !important;
+    overflow-y: auto !important;
+    height: auto !important;
+    min-height: 100dvh;
   }
   .dashboard-split {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto;
+    overflow: visible !important;
     gap: 12px;
   }
 }
