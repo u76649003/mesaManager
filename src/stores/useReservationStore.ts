@@ -220,12 +220,24 @@ export const useReservationStore = create<ReservationState>()((set, get) => ({
     data = result.data;
     error = result.error;
 
-    if (error && (error.message.includes('bizum_name') || error.message.includes('schema cache') || error.message.includes('column'))) {
-      console.warn('Falling back store insert without bizum columns...');
+    if (error && (
+      error.message.includes('is_prepayment') ||
+      error.message.includes('prepayment') ||
+      error.message.includes('payment_status') ||
+      error.message.includes('bizum') ||
+      error.message.includes('schema cache') ||
+      error.message.includes('column')
+    )) {
+      console.warn('Falling back store insert without prepayment columns...');
       const fallbackSanitized = { ...sanitized };
+      delete fallbackSanitized.is_prepayment;
+      delete fallbackSanitized.prepayment_amount;
+      delete fallbackSanitized.prepayment_reason;
+      delete fallbackSanitized.payment_status;
       delete fallbackSanitized.payment_method;
       delete fallbackSanitized.bizum_phone;
       delete fallbackSanitized.bizum_name;
+      delete fallbackSanitized.send_email;
 
       const retryResult = await supabase
         .from('reservations')
@@ -274,12 +286,24 @@ export const useReservationStore = create<ReservationState>()((set, get) => ({
       .update(dbUpdates)
       .eq('id', id);
 
-    if (error && (error.message.includes('bizum_name') || error.message.includes('schema cache') || error.message.includes('column'))) {
-      console.warn('Falling back update without bizum columns...');
+    if (error && (
+      error.message.includes('is_prepayment') ||
+      error.message.includes('prepayment') ||
+      error.message.includes('payment_status') ||
+      error.message.includes('bizum') ||
+      error.message.includes('schema cache') ||
+      error.message.includes('column')
+    )) {
+      console.warn('Falling back update without prepayment columns...');
       const fallbackUpdates = { ...dbUpdates };
+      delete fallbackUpdates.is_prepayment;
+      delete fallbackUpdates.prepayment_amount;
+      delete fallbackUpdates.prepayment_reason;
+      delete fallbackUpdates.payment_status;
       delete fallbackUpdates.payment_method;
       delete fallbackUpdates.bizum_phone;
       delete fallbackUpdates.bizum_name;
+      delete fallbackUpdates.send_email;
 
       const retryResult = await supabase
         .from('reservations')

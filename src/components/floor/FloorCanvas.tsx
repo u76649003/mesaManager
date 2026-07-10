@@ -19,7 +19,7 @@ import { TableItem } from './TableItem';
 import { MergeOverlay } from './MergeOverlay';
 import { cn } from '@/lib/utils';
 import type { Table, Room, TableGroup, Reservation, TableType } from '@/types';
-import { Plus, Grid, Layers, Circle, Square, Link2 } from 'lucide-react';
+import { Plus, Grid, Layers, Circle, Square, Link2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { parseAndCreateRoomsFromImage } from '@/app/actions/layoutParser';
 
@@ -67,6 +67,14 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [showImportPrompt, setShowImportPrompt] = useState(true);
+  const [showAddTables, setShowAddTables] = useState(false);
+
+  useEffect(() => {
+    if (mode !== 'edit') {
+      setShowAddTables(false);
+    }
+  }, [mode]);
+
   const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const touchStartRef = useRef({
     x: 0,
@@ -767,13 +775,22 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
 
       {/* Indicador de modo & Panel de herramientas de adición */}
       <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-3 max-w-[240px]">
-        {mode === 'edit' && (
+        {mode === 'edit' && showAddTables && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="p-3 bg-slate-900/95 backdrop-blur-sm border border-slate-800 rounded-2xl shadow-xl flex flex-col gap-2"
+            className="p-3 bg-slate-900/95 backdrop-blur-sm border border-slate-800 rounded-2xl shadow-xl flex flex-col gap-2 relative min-w-[200px]"
           >
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Añadir Mesas</span>
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Añadir Mesas</span>
+              <button
+                type="button"
+                onClick={() => setShowAddTables(false)}
+                className="w-5 h-5 rounded-md bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={10} />
+              </button>
+            </div>
             <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto pr-1">
               {tableTypes.map((type: TableType) => (
                 <button
@@ -812,13 +829,30 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
           </motion.div>
         )}
 
-        <div className={cn(
-          'w-fit px-3 py-1.5 rounded-full text-xs font-semibold border bg-slate-900/90 backdrop-blur-sm shadow-md',
-          mode === 'edit'
-            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-            : 'bg-slate-850 text-slate-400 border-slate-700'
-        )}>
-          {mode === 'edit' ? '✏️ Modo edición' : '🍽️ Modo servicio'}
+        <div className="flex items-center gap-2">
+          <div className={cn(
+            'px-3 py-1.5 rounded-full text-xs font-semibold border bg-slate-900/90 backdrop-blur-sm shadow-md select-none',
+            mode === 'edit'
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+              : 'bg-slate-850 text-slate-400 border-slate-700'
+          )}>
+            {mode === 'edit' ? '✏️ Modo edición' : '🍽️ Modo servicio'}
+          </div>
+
+          {mode === 'edit' && (
+            <button
+              type="button"
+              onClick={() => setShowAddTables(!showAddTables)}
+              className={cn(
+                'px-3 py-1.5 rounded-full text-xs font-semibold border backdrop-blur-sm shadow-md transition-all cursor-pointer flex items-center gap-1',
+                showAddTables
+                  ? 'bg-indigo-600 border-indigo-650 text-white font-black'
+                  : 'bg-slate-900/90 border-indigo-500/30 text-indigo-400 hover:border-indigo-500 hover:bg-slate-850'
+              )}
+            >
+              ➕ Añadir Mesa
+            </button>
+          )}
         </div>
       </div>
     </div>

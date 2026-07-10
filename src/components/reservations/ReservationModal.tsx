@@ -395,12 +395,24 @@ export function ReservationModal() {
       insertedData = result.data;
       error = result.error;
 
-      if (error && (error.message.includes('bizum_name') || error.message.includes('schema cache') || error.message.includes('column'))) {
-        console.warn('Falling back insert without bizum columns in modal...');
+      if (error && (
+        error.message.includes('is_prepayment') ||
+        error.message.includes('prepayment') ||
+        error.message.includes('payment_status') ||
+        error.message.includes('bizum') ||
+        error.message.includes('schema cache') ||
+        error.message.includes('column')
+      )) {
+        console.warn('Falling back insert without prepayment columns in modal...');
         const fallbackSanitized = { ...sanitized };
+        delete fallbackSanitized.is_prepayment;
+        delete fallbackSanitized.prepayment_amount;
+        delete fallbackSanitized.prepayment_reason;
+        delete fallbackSanitized.payment_status;
         delete fallbackSanitized.payment_method;
         delete fallbackSanitized.bizum_phone;
         delete fallbackSanitized.bizum_name;
+        delete fallbackSanitized.send_email;
 
         const retryResult = await supabase
           .from('reservations')
