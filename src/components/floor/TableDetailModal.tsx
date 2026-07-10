@@ -89,7 +89,7 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 15 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-4"
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-white border-2 border-slate-350 rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden">
