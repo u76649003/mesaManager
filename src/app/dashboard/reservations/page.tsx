@@ -643,7 +643,7 @@ function DayCalendarView({
           </div>
         )}
 
-        {res.is_prepayment && res.prepayment_amount > 0 && (
+        {res.is_prepayment && (res.prepayment_amount ?? 0) > 0 && (
           <div className="mt-3 p-3 bg-emerald-50/50 border border-emerald-200 rounded-xl text-xs flex flex-wrap gap-1.5 items-center justify-between text-emerald-800 font-bold">
             <span className="flex items-center gap-1.5">
               <span>💵</span>
