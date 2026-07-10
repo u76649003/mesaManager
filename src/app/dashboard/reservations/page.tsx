@@ -64,6 +64,7 @@ export default function ReservationsCalendarPage() {
   const [selectedTimeFilter, setSelectedTimeFilter] = useState<string>('all');
   const [allTables, setAllTables] = useState<Table[]>([]);
   const [allGroups, setAllGroups] = useState<TableGroup[]>([]);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   // Load rooms and reservations data on mount
   useEffect(() => {
@@ -278,102 +279,119 @@ export default function ReservationsCalendarPage() {
               <span>+ Reserva</span>
             </button>
           </div>
-        </div>        {/* Filtro de Salones */}
-        <div className="px-6 py-3 bg-white border-b-2 border-slate-200 flex flex-wrap items-center gap-3">
-          <span className="text-slate-500 text-xs font-black uppercase tracking-wider">Filtrar por Salón:</span>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setSelectedRoomFilter('all')}
-              className={cn(
-                "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border-2",
-                selectedRoomFilter === 'all'
-                  ? "bg-slate-800 border-slate-800 text-white shadow-sm"
-                  : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
-              )}
-            >
-              Todos los salones
-            </button>
-            {rooms.map((r) => (
+        </div>        {/* Botón para colapsar/desplegar filtros en móvil */}
+        <div className="flex md:hidden items-center justify-between p-3 bg-slate-50 border-b-2 border-slate-200 w-full px-5">
+          <span className="text-[11px] font-black text-slate-800">
+            🔍 {selectedRoomFilter === 'all' ? 'Todos los salones' : rooms.find(r => r.id === selectedRoomFilter)?.name || 'Salón'}
+            {selectedTimeFilter !== 'all' ? ` · Hora: ${selectedTimeFilter}` : ''}
+          </span>
+          <button
+            onClick={() => setShowMobileFilters(!showMobileFilters)}
+            className="px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-600 rounded-xl text-[10px] font-black cursor-pointer hover:bg-blue-100 transition-colors"
+          >
+            {showMobileFilters ? '🙈 Ocultar Filtros' : '⚙️ Filtrar Salón/Hora'}
+          </button>
+        </div>
+
+        {/* Panel de filtros (Siempre visible en PC, colapsable en Móvil) */}
+        <div className={cn("flex-col", showMobileFilters ? "flex" : "hidden md:flex")}>
+          {/* Filtro de Salones */}
+          <div className="px-6 py-3 bg-white border-b-2 border-slate-200 flex flex-wrap items-center gap-3">
+            <span className="text-slate-500 text-xs font-black uppercase tracking-wider">Filtrar por Salón:</span>
+            <div className="flex items-center gap-2 flex-wrap">
               <button
-                key={r.id}
-                onClick={() => setSelectedRoomFilter(r.id)}
+                onClick={() => setSelectedRoomFilter('all')}
                 className={cn(
                   "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border-2",
-                  selectedRoomFilter === r.id
-                    ? "bg-blue-600 border-blue-600 text-white shadow-sm"
+                  selectedRoomFilter === 'all'
+                    ? "bg-slate-800 border-slate-800 text-white shadow-sm"
                     : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
                 )}
               >
-                {r.name}
+                Todos los salones
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Hora pills row - derived from shifts */}
-        {(() => {
-          const activeShifts = shifts.filter((s) => s.is_active);
-          const allSlots: { time: string; shiftName: string; color: string }[] = [];
-          activeShifts.forEach((s) => {
-            let [h, m] = s.start_time.split(':').map(Number);
-            const [endH, endM] = s.end_time.split(':').map(Number);
-            let cur = h * 60 + m;
-            let end = endH * 60 + endM;
-            if (end <= cur) end += 24 * 60;
-            while (cur <= end) {
-              const sh = Math.floor(cur / 60) % 24;
-              const sm = cur % 60;
-              const t = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
-              if (!allSlots.some((sl) => sl.time === t)) {
-                allSlots.push({ time: t, shiftName: s.name, color: s.color });
-              }
-              cur += 30;
-            }
-          });
-          const groups: Record<string, typeof allSlots> = {};
-          allSlots.sort((a, b) => a.time.localeCompare(b.time)).forEach((sl) => {
-            if (!groups[sl.shiftName]) groups[sl.shiftName] = [];
-            groups[sl.shiftName].push(sl);
-          });
-
-          if (allSlots.length === 0) return null;
-
-          return (
-            <div className="px-6 py-3 bg-slate-50 border-b-2 border-slate-200 flex flex-col gap-2">
-              {Object.entries(groups).map(([shiftName, slots]) => (
-                <div key={shiftName} className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest w-20 shrink-0">
-                    {shiftName}
-                  </span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {slots.map((slot) => (
-                      <button
-                        key={slot.time}
-                        onClick={() =>
-                          setSelectedTimeFilter(
-                            selectedTimeFilter === slot.time ? 'all' : slot.time
-                          )
-                        }
-                        className={cn(
-                          'px-3 py-1 rounded-xl border-2 text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0',
-                          selectedTimeFilter === slot.time
-                            ? 'bg-blue-600 border-blue-600 text-white shadow-md'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-950'
-                        )}
-                      >
-                        <span
-                          className="w-1.5 h-1.5 rounded-full inline-block"
-                          style={{ backgroundColor: slot.color }}
-                        />
-                        {slot.time}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              {rooms.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setSelectedRoomFilter(r.id)}
+                  className={cn(
+                    "px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer border-2",
+                    selectedRoomFilter === r.id
+                      ? "bg-blue-600 border-blue-600 text-white shadow-sm"
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
+                  )}
+                >
+                  {r.name}
+                </button>
               ))}
             </div>
-          );
-        })()}
+          </div>
+
+          {/* Hora pills row - derived from shifts */}
+          {(() => {
+            const activeShifts = shifts.filter((s) => s.is_active);
+            const allSlots: { time: string; shiftName: string; color: string }[] = [];
+            activeShifts.forEach((s) => {
+              let [h, m] = s.start_time.split(':').map(Number);
+              const [endH, endM] = s.end_time.split(':').map(Number);
+              let cur = h * 60 + m;
+              let end = endH * 60 + endM;
+              if (end <= cur) end += 24 * 60;
+              while (cur <= end) {
+                const sh = Math.floor(cur / 60) % 24;
+                const sm = cur % 60;
+                const t = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
+                if (!allSlots.some((sl) => sl.time === t)) {
+                  allSlots.push({ time: t, shiftName: s.name, color: s.color });
+                }
+                cur += 30;
+              }
+            });
+            const groups: Record<string, typeof allSlots> = {};
+            allSlots.sort((a, b) => a.time.localeCompare(b.time)).forEach((sl) => {
+              if (!groups[sl.shiftName]) groups[sl.shiftName] = [];
+              groups[sl.shiftName].push(sl);
+            });
+
+            if (allSlots.length === 0) return null;
+
+            return (
+              <div className="px-6 py-3 bg-slate-50 border-b-2 border-slate-200 flex flex-col gap-2">
+                {Object.entries(groups).map(([shiftName, slots]) => (
+                  <div key={shiftName} className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest w-20 shrink-0">
+                      {shiftName}
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {slots.map((slot) => (
+                        <button
+                          key={slot.time}
+                          onClick={() =>
+                            setSelectedTimeFilter(
+                              selectedTimeFilter === slot.time ? 'all' : slot.time
+                            )
+                          }
+                          className={cn(
+                            'px-3 py-1 rounded-xl border-2 text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0',
+                            selectedTimeFilter === slot.time
+                              ? 'bg-blue-600 border-blue-600 text-white shadow-md'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-950'
+                          )}
+                        >
+                          <span
+                            className="w-1.5 h-1.5 rounded-full inline-block"
+                            style={{ backgroundColor: slot.color }}
+                          />
+                          {slot.time}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
 
 
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
