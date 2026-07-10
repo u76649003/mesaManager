@@ -479,6 +479,7 @@ function RoomReservationsCard({
   renderReservationCard: (res: Reservation) => React.ReactNode;
 }) {
   const [showAvailability, setShowAvailability] = useState(false);
+  const { setSelectedTime, openModal } = useReservationStore();
 
   return (
     <div className="p-4 md:p-5 bg-slate-100 border-2 border-slate-200 rounded-3xl space-y-3.5">
@@ -495,7 +496,7 @@ function RoomReservationsCard({
             {roomReservations.length} {roomReservations.length === 1 ? 'reserva' : 'reservas'} · {totalTablesCount} mesas
           </span>
           <button
-            onClick={() => setShowAvailability(!showAvailability)}
+            onClick={() => !showAvailability && setShowAvailability(true) || showAvailability && setShowAvailability(false)}
             className="px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-600 rounded-xl text-[10px] font-black cursor-pointer hover:bg-blue-100 transition-colors"
           >
             {showAvailability ? '🙈 Ocultar Horas' : '📊 Disponibilidad'}
@@ -524,9 +525,13 @@ function RoomReservationsCard({
                   </span>
                   <div className="flex flex-wrap gap-1.5 flex-1">
                     {slotsInGroup.map((slot) => (
-                      <div
+                      <button
                         key={slot.time}
-                        className="flex flex-col items-center px-2 py-1.5 bg-white border-2 border-slate-150 text-slate-800 text-[10px] font-black rounded-lg min-w-[58px] shadow-sm"
+                        onClick={() => {
+                          setSelectedTime(slot.time);
+                          openModal();
+                        }}
+                        className="flex flex-col items-center px-2 py-1.5 bg-white border-2 border-slate-150 hover:border-blue-500 hover:bg-blue-50/50 cursor-pointer text-slate-800 text-[10px] font-black rounded-lg min-w-[58px] shadow-sm transition-colors"
                       >
                         <div className="flex items-center gap-1">
                           <span
@@ -538,7 +543,7 @@ function RoomReservationsCard({
                         <span className="text-[8px] text-emerald-600 font-extrabold mt-0.5 leading-none">
                           {slot.freeTables} {slot.freeTables === 1 ? 'libre' : 'libres'}
                         </span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
