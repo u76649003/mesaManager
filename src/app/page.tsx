@@ -46,6 +46,7 @@ export default function DashboardPage() {
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeView, setActiveView] = useState<'map' | 'list'>('map');
 
   // --- Overdue Reservation Alert state ---
   // Map of reservationId -> how many minutes of extra grace have been granted
@@ -364,21 +365,52 @@ export default function DashboardPage() {
           reservationsToday={reservations.filter((r) => r.date === new Date().toISOString().slice(0, 10)).length}
         />
 
+        {/* Mobile View Toggle */}
+        <div className="flex md:hidden p-3 bg-white border-b border-slate-200">
+          <div className="flex w-full rounded-2xl bg-slate-100 p-1 border border-slate-200 shadow-inner">
+            <button
+              onClick={() => setActiveView('map')}
+              className={cn(
+                "flex-1 py-2 text-sm font-black rounded-xl transition-all cursor-pointer text-center",
+                activeView === 'map'
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "text-slate-650 hover:text-slate-900"
+              )}
+            >
+              🗺️ Plano de Sala
+            </button>
+            <button
+              onClick={() => setActiveView('list')}
+              className={cn(
+                "flex-1 py-2 text-sm font-black rounded-xl transition-all cursor-pointer text-center",
+                activeView === 'list'
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "text-slate-650 hover:text-slate-900"
+              )}
+            >
+              📅 Lista de Reservas
+            </button>
+          </div>
+        </div>
+
         {/* Vista dividida: Lista izquierda + Canvas derecho */}
         <div className="dashboard-split flex-1 overflow-hidden">
-          <ReservationList
-            onReservationClick={(res) => {
-              if (res.table_id) {
-                const t = tables.find((t) => t.id === res.table_id);
-                if (t) {
-                  setSelectedTable(t);
-                  selectTable(t.id);
+          <div className={cn("h-full md:block flex-col overflow-hidden", activeView === 'list' ? "flex" : "hidden")}>
+            <ReservationList
+              onReservationClick={(res) => {
+                if (res.table_id) {
+                  const t = tables.find((t) => t.id === res.table_id);
+                  if (t) {
+                    setSelectedTable(t);
+                    selectTable(t.id);
+                    setActiveView('map');
+                  }
                 }
-              }
-            }}
-          />
+              }}
+            />
+          </div>
 
-          <div className="flex flex-col p-3 gap-3 overflow-hidden flex-1">
+          <div className={cn("md:flex flex-col p-3 gap-3 overflow-hidden flex-1", activeView === 'map' ? "flex" : "hidden")}>
             {/* Cabecera del plano con Leyenda y Selector de Horas (Timeline) */}
             <div className="flex flex-col gap-3 bg-white border-2 border-slate-200 p-3.5 rounded-3xl shadow-sm">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-200 pb-2">
