@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -68,6 +68,16 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
   const [isUploading, setIsUploading] = useState(false);
   const [showImportPrompt, setShowImportPrompt] = useState(true);
   const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const touchStartRef = useRef({
+    x: 0,
+    y: 0,
+    panX: 0,
+    panY: 0,
+    distance: 0,
+    zoom: 1,
+    isPanning: false,
+    isZooming: false
+  });
 
   const handleUploadBackground = async (file: File) => {
     if (!file) return;
@@ -245,6 +255,41 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
     return hasActiveRes && group.is_active && group.member_table_ids.length > 1;
   });
 
+  const fitToScreen = useCallback(() => {
+    if (!canvasRef.current || !room) return;
+
+    const containerWidth = canvasRef.current.clientWidth;
+    const containerHeight = canvasRef.current.clientHeight;
+    if (containerWidth === 0 || containerHeight === 0) return;
+
+    const roomWidth = room.canvas_width || 1200;
+    const roomHeight = room.canvas_height || 800;
+
+    const padding = 32;
+    const zoomX = (containerWidth - padding) / roomWidth;
+    const zoomY = (containerHeight - padding) / roomHeight;
+    const bestZoom = Math.max(0.15, Math.min(1.5, Math.min(zoomX, zoomY)));
+
+    const targetPanX = (containerWidth - roomWidth * bestZoom) / 2;
+    const targetPanY = (containerHeight - roomHeight * bestZoom) / 2;
+
+    setZoom(bestZoom);
+    setPan(targetPanX, targetPanY);
+  }, [room, setZoom, setPan]);
+
+  // Adaptar zoom/posición al cargar sala o cambiar tamaño de pantalla
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fitToScreen();
+    }, 50);
+
+    window.addEventListener('resize', fitToScreen);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', fitToScreen);
+    };
+  }, [room.id, fitToScreen]);
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setDraggingId(event.active.id as string);
   }, []);
@@ -286,10 +331,11 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
     [zoom, setZoom]
   );
 
-  // Pan con clic del botón central o espacio+drag
+  // Pan con clic del botón izquierdo en fondo, o botón central/derecho en cualquier lado
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (e.button === 1 || e.button === 2) {
+      const isLeftClickOnBackground = e.button === 0 && e.target === canvasRef.current;
+      if (isLeftClickOnBackground || e.button === 1 || e.button === 2) {
         e.preventDefault();
         setIsPanning(true);
         panStart.current = { x: e.clientX, y: e.clientY, panX, panY };
@@ -309,6 +355,86 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
   );
 
   const handleMouseUp = useCallback(() => setIsPanning(false), []);
+
+  // Gestos táctiles de pan y pinch-zoom en móvil
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      const isBackgroundTouch = e.target === canvasRef.current;
+      const canPan = mode === 'service' || isBackgroundTouch;
+
+      if (e.touches.length === 1 && canPan) {
+        const touch = e.touches[0];
+        touchStartRef.current = {
+          x: touch.clientX,
+          y: touch.clientY,
+          panX,
+          panY,
+          distance: 0,
+          zoom,
+          isPanning: true,
+          isZooming: false,
+        };
+        setIsPanning(true);
+      } else if (e.touches.length === 2) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+        touchStartRef.current = {
+          x: midX,
+          y: midY,
+          panX,
+          panY,
+          distance: dist,
+          zoom,
+          isPanning: true,
+          isZooming: true,
+        };
+        setIsPanning(true);
+      }
+    },
+    [panX, panY, zoom, mode]
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!touchStartRef.current.isPanning) return;
+
+      if (e.touches.length === 1 && !touchStartRef.current.isZooming) {
+        const touch = e.touches[0];
+        const dx = touch.clientX - touchStartRef.current.x;
+        const dy = touch.clientY - touchStartRef.current.y;
+        setPan(touchStartRef.current.panX + dx, touchStartRef.current.panY + dy);
+      } else if (e.touches.length === 2 && touchStartRef.current.isZooming) {
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+
+        // Pan por punto medio
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+        const dx = midX - touchStartRef.current.x;
+        const dy = midY - touchStartRef.current.y;
+        setPan(touchStartRef.current.panX + dx, touchStartRef.current.panY + dy);
+
+        // Zoom por pinch
+        const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        const startDist = touchStartRef.current.distance;
+        if (startDist > 0) {
+          const scale = dist / startDist;
+          const newZoom = Math.max(0.15, Math.min(3, touchStartRef.current.zoom * scale));
+          setZoom(newZoom);
+        }
+      }
+    },
+    [setPan, setZoom]
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    touchStartRef.current.isPanning = false;
+    touchStartRef.current.isZooming = false;
+    setIsPanning(false);
+  }, []);
 
   const canMerge = selectedTableIds.length >= 2 && (mode === 'edit' || isMultiSelectMode);
 
@@ -367,6 +493,15 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
             +
           </button>
         </div>
+
+        {/* Botón de Ajuste Automático */}
+        <button
+          onClick={fitToScreen}
+          className="bg-white border-2 border-slate-300 hover:text-slate-950 hover:bg-slate-100 text-slate-650 px-3.5 py-2.5 rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5 text-xs font-black"
+          title="Ajustar plano a la pantalla"
+        >
+          📱 <span>Ajustar</span>
+        </button>
 
         {/* Carga rápida de Plano en Modo Edición */}
         {mode === 'edit' && (
@@ -435,6 +570,9 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           onContextMenu={(e) => e.preventDefault()}
           style={{ minHeight: '500px' }}
         >
