@@ -192,134 +192,169 @@ export function TopBar({
   };
 
   return (
-    <header className="flex items-center justify-between px-5 py-4 border-2 border-slate-200 bg-white rounded-3xl shadow-sm flex-shrink-0 z-30 mb-4">
-      {/* Izquierda: Nombre del salón + Turno */}
-      <div className="flex items-center gap-4">
-        <div className="relative">
-          <button
-            onClick={() => !isCreatingRoom && setIsDropdownOpen(!isDropdownOpen)}
-            disabled={isCreatingRoom}
-            className="flex items-center gap-2.5 px-4.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-300 text-left transition-all disabled:opacity-50 shadow-sm cursor-pointer"
-          >
-            {isCreatingRoom ? (
-              <div className="w-4 h-4 rounded-full border-2 border-blue-500/30 border-t-blue-600 animate-spin" />
-            ) : (
-              <Layers size={16} className="text-blue-600" />
-            )}
-            <span className="text-slate-900 font-extrabold text-sm">
-              {isCreatingRoom ? 'Creando salón...' : room.name}
-            </span>
-            <ChevronDown size={15} className="text-slate-500 shrink-0" />
-          </button>
-
-          {/* Dropdown flotante claro */}
-          {isDropdownOpen && (
-            <>
-              {/* Overlay invisible para cerrar clicando fuera */}
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsDropdownOpen(false)}
-              />
-              <div className="absolute top-full left-0 mt-2 w-64 bg-white border-2 border-slate-350 rounded-2xl shadow-xl p-2.5 z-40 space-y-1">
-                <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider px-2.5 py-1.5 block border-b border-slate-100 mb-1">
-                  Mis Salones
-                </span>
-                
-                {/* Listado de salones */}
-                <div className="max-h-48 overflow-y-auto space-y-1">
-                  {rooms.map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => {
-                        onRoomChange(r);
-                        setIsDropdownOpen(false);
-                      }}
-                      className={cn(
-                        "w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between transition-colors border cursor-pointer",
-                        r.id === room.id
-                          ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                          : "text-slate-700 bg-white border-transparent hover:bg-slate-50 hover:text-slate-950"
-                      )}
-                    >
-                      <span className="truncate">{r.name}</span>
-                      <span className={cn("text-[9px] font-mono", r.id === room.id ? "text-blue-100" : "text-slate-450")}>
-                        {r.canvas_width}x{r.canvas_height}px
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="h-[1.5px] bg-slate-100 my-1.5" />
-
-                {/* Acciones de salones */}
-                <label className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-50 text-blue-650 hover:text-blue-750 text-xs font-black flex items-center gap-2.5 transition-colors cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={handleCreateRoomFromImage}
-                  />
-                  <Upload size={15} />
-                  <span>Importar Salón desde Imagen</span>
-                </label>
-                
-                <button
-                  onClick={() => {
-                    openRoomModal();
-                    setIsDropdownOpen(false);
-                  }}
-                  className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-50 text-slate-700 hover:text-slate-950 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border border-transparent"
-                >
-                  <PlusCircle size={15} />
-                  <span>Crear Salón Manual</span>
-                </button>
-                <button
-                  onClick={() => {
-                    openRoomModal(room);
-                    setIsDropdownOpen(false);
-                  }}
-                  className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-50 text-slate-700 hover:text-slate-950 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border border-transparent"
-                >
-                  <Edit size={15} />
-                  <span>Editar Salón Actual</span>
-                </button>
-              </div>
-            </>
-          )}
-
-          {activeShift && (
-            <div className="flex items-center gap-2 mt-1 px-1">
-              <div
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: activeShift.color }}
-              />
-              <span className="text-xs font-semibold text-slate-600">
-                Turno {activeShift.name} · {activeShift.start_time}–{activeShift.end_time}
+    <header className="flex flex-col md:flex-row gap-3 md:gap-4 px-3 md:px-5 py-3 md:py-4 border-2 border-slate-200 bg-white rounded-3xl shadow-sm flex-shrink-0 z-30 mb-3 md:mb-4">
+      {/* Left section: Dropdown, Shifts and Stats */}
+      <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 w-full md:w-auto">
+        <div className="flex items-center justify-between w-full md:w-auto gap-2">
+          {/* Room Selection Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => !isCreatingRoom && setIsDropdownOpen(!isDropdownOpen)}
+              disabled={isCreatingRoom}
+              className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-300 text-left transition-all disabled:opacity-50 shadow-sm cursor-pointer"
+            >
+              {isCreatingRoom ? (
+                <div className="w-4 h-4 rounded-full border-2 border-blue-500/30 border-t-blue-600 animate-spin" />
+              ) : (
+                <Layers size={16} className="text-blue-600" />
+              )}
+              <span className="text-slate-900 font-extrabold text-xs md:text-sm">
+                {isCreatingRoom ? 'Creando...' : room.name}
               </span>
-            </div>
-          )}
+              <ChevronDown size={15} className="text-slate-500 shrink-0" />
+            </button>
+
+            {/* Dropdown flotante claro */}
+            {isDropdownOpen && (
+              <>
+                {/* Overlay invisible para cerrar clicando fuera */}
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => setIsDropdownOpen(false)}
+                />
+                <div className="absolute top-full left-0 mt-2 w-64 bg-white border-2 border-slate-350 rounded-2xl shadow-xl p-2.5 z-40 space-y-1">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider px-2.5 py-1.5 block border-b border-slate-100 mb-1">
+                    Mis Salones
+                  </span>
+                  
+                  {/* Listado de salones */}
+                  <div className="max-h-48 overflow-y-auto space-y-1">
+                    {rooms.map((r) => (
+                      <button
+                        key={r.id}
+                        onClick={() => {
+                          onRoomChange(r);
+                          setIsDropdownOpen(false);
+                        }}
+                        className={cn(
+                          "w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between transition-colors border cursor-pointer",
+                          r.id === room.id
+                            ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                            : "text-slate-700 bg-white border-transparent hover:bg-slate-50 hover:text-slate-950"
+                        )}
+                      >
+                        <span className="truncate">{r.name}</span>
+                        <span className={cn("text-[9px] font-mono", r.id === room.id ? "text-blue-100" : "text-slate-450")}>
+                          {r.canvas_width}x{r.canvas_height}px
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="h-[1.5px] bg-slate-100 my-1.5" />
+
+                  {/* Acciones de salones */}
+                  <label className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-50 text-blue-650 hover:text-blue-750 text-xs font-black flex items-center gap-2.5 transition-colors cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={handleCreateRoomFromImage}
+                    />
+                    <Upload size={15} />
+                    <span>Importar Salón desde Imagen</span>
+                  </label>
+                  
+                  <button
+                    onClick={() => {
+                      openRoomModal();
+                      setIsDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-50 text-slate-700 hover:text-slate-950 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border border-transparent"
+                  >
+                    <PlusCircle size={15} />
+                    <span>Crear Salón Manual</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      openRoomModal(room);
+                      setIsDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-50 text-slate-700 hover:text-slate-950 text-xs font-bold flex items-center gap-2.5 transition-colors cursor-pointer border border-transparent"
+                  >
+                    <Edit size={15} />
+                    <span>Editar Salón Actual</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Date Selector (Mobile only) */}
+          <div className="flex md:hidden items-center gap-1.5 bg-slate-100 border-2 border-slate-200 rounded-xl p-0.5 shadow-inner">
+            <button
+              onClick={goToPrevDay}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <button
+              onClick={goToToday}
+              className={cn(
+                'px-2.5 py-1 rounded-lg text-xs font-extrabold transition-colors cursor-pointer',
+                isToday 
+                  ? 'text-blue-600 bg-white border border-slate-200 shadow-sm' 
+                  : 'text-slate-700 hover:text-slate-950 hover:bg-slate-200',
+                isDateClosed(selectedDate) && 'text-red-650 font-black'
+              )}
+            >
+              {isToday
+                ? 'Hoy'
+                : format(parseISO(selectedDate), "d 'de' MMM", { locale: es })}
+            </button>
+
+            <button
+              onClick={goToNextDay}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
 
-        {/* Separador */}
-        <div className="w-[1.5px] h-8 bg-slate-200" />
+        {activeShift && (
+          <div className="flex items-center gap-2 mt-0.5 md:mt-0 px-1">
+            <div
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: activeShift.color }}
+            />
+            <span className="text-[10px] md:text-xs font-semibold text-slate-500 truncate max-w-[200px]">
+              Turno {activeShift.name} · {activeShift.start_time}–{activeShift.end_time}
+            </span>
+          </div>
+        )}
 
-        {/* Stats rápidas de alto contraste */}
-        <div className="flex items-center gap-3">
+        {/* Separator (Desktop only) */}
+        <div className="hidden md:block w-[1.5px] h-8 bg-slate-200" />
+
+        {/* Stats Grid on Mobile, Flex Row on Desktop */}
+        <div className="grid grid-cols-3 md:flex items-center gap-1.5 md:gap-3 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
           <Stat
-            icon={<TableProperties size={15} />}
+            icon={<TableProperties size={14} />}
             value={`${occupiedTables}/${totalTables}`}
             label="Mesas en uso"
             color={occupancyPct > 80 ? '#b91c1c' : occupancyPct > 50 ? '#b45309' : '#16a34a'}
           />
           <Stat
-            icon={<Calendar size={15} />}
+            icon={<Calendar size={14} />}
             value={String(reservationsToday)}
             label="Reservas hoy"
             color="#2563eb"
           />
           <Stat
-            icon={<Clock size={15} />}
+            icon={<Clock size={14} />}
             value={`${occupancyPct}%`}
             label="Ocupación"
             color={occupancyPct > 80 ? '#b91c1c' : '#475569'}
@@ -327,8 +362,8 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Centro: Navegación de fecha táctil y grande */}
-      <div className="flex items-center gap-3">
+      {/* Date selector (Desktop only) */}
+      <div className="hidden md:flex items-center gap-3">
         <div className={cn(
           "flex items-center gap-2 bg-slate-100 border-2 border-slate-200 rounded-2xl p-1 shadow-inner transition-colors",
           isDateClosed(selectedDate) && "bg-red-50 border-red-200"
@@ -369,15 +404,15 @@ export function TopBar({
         )}
       </div>
 
-      {/* Derecha: Toggle modo servicio/edición grande */}
-      <div className="flex items-center gap-2">
+      {/* Right section: Mode Switcher & Reset */}
+      <div className="flex items-center justify-between md:justify-end gap-2 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
         <div className="flex items-center bg-slate-100 border-2 border-slate-200 rounded-2xl p-1 gap-1">
           {(['service', 'edit'] as const).map((m) => (
             <button
               key={m}
               onClick={() => onModeChange(m)}
               className={cn(
-                'flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl text-sm font-extrabold transition-all border border-transparent cursor-pointer',
+                'flex items-center gap-1.5 px-3 md:px-4.5 py-1.5 md:py-2.5 rounded-xl text-xs font-extrabold transition-all border border-transparent cursor-pointer',
                 mode === m
                   ? m === 'edit'
                     ? 'bg-amber-100 text-amber-800 border-2 border-amber-300 shadow-sm'
@@ -385,27 +420,30 @@ export function TopBar({
                   : 'text-slate-650 hover:text-slate-950 hover:bg-slate-200'
               )}
             >
-              {m === 'service' ? <Eye size={16} /> : <Edit3 size={16} />}
-              {m === 'service' ? 'Ver Mesas' : 'Editar Plano'}
+              {m === 'service' ? <Eye size={14} /> : <Edit3 size={14} />}
+              <span className="text-[10px] md:text-xs">{m === 'service' ? 'Ver Mesas' : 'Editar Plano'}</span>
             </button>
           ))}
         </div>
-        {mode === 'edit' && (
-          <Link
-            href="/dashboard/settings"
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-950 text-xs font-black transition-all shadow-sm cursor-pointer"
-          >
-            ⚙️ Ajustes
-          </Link>
-        )}
+        
+        <div className="flex items-center gap-2">
+          {mode === 'edit' && (
+            <Link
+              href="/dashboard/settings"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-950 text-[10px] font-black transition-all shadow-sm cursor-pointer"
+            >
+              ⚙️ Ajustes
+            </Link>
+          )}
 
-        <button
-          onClick={resetView}
-          title="Restablecer vista"
-          className="w-9.5 h-9.5 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-700 hover:text-slate-950 hover:bg-slate-50 transition-colors text-sm font-bold cursor-pointer"
-        >
-          ⊡
-        </button>
+          <button
+            onClick={resetView}
+            title="Restablecer vista"
+            className="w-8 h-8 md:w-9.5 md:h-9.5 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-700 hover:text-slate-950 hover:bg-slate-50 transition-colors text-xs md:text-sm font-bold cursor-pointer"
+          >
+            ⊡
+          </button>
+        </div>
       </div>
     </header>
   );

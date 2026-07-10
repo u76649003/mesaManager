@@ -47,26 +47,107 @@ export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
   const activeNav = getActiveId();
 
   return (
-    <aside className="sidebar flex flex-col justify-between h-screen border-r-2 border-slate-200 bg-white p-4 md:p-6 w-20 md:w-60 transition-all shrink-0 z-40">
-      {/* Brand Header */}
-      <div className="flex items-center justify-center md:justify-start gap-3 mb-6">
-        <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 border border-blue-550 shrink-0">
-          <ChefHat size={24} />
+    <>
+      {/* Desktop Sidebar (hidden on mobile) */}
+      <aside className="sidebar hidden md:flex flex-col justify-between h-screen border-r-2 border-slate-200 bg-white p-6 w-[240px] shrink-0 z-40">
+        {/* Brand Header */}
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 border border-blue-550 shrink-0">
+            <ChefHat size={24} />
+          </div>
+          <div className="min-w-0">
+            <span className="text-slate-900 font-extrabold text-base tracking-tight block" style={{ fontFamily: 'var(--font-title)' }}>
+              MesaManager
+            </span>
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+              Panel de Control
+            </span>
+          </div>
         </div>
-        <div className="min-w-0 hidden md:block">
-          <span className="text-slate-900 font-extrabold text-base tracking-tight block" style={{ fontFamily: 'var(--font-title)' }}>
-            MesaManager
-          </span>
-          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
-            Panel de Control
-          </span>
+
+        <div className="h-[1.5px] bg-slate-100 mb-4 w-full" />
+
+        {/* Navigation list */}
+        <nav className="flex flex-col gap-2 flex-1 overflow-y-auto">
+          {NAV_ITEMS.map(({ icon: Icon, label, id, href }) => {
+            const isActive = activeNav === id;
+            return (
+              <Link
+                key={id}
+                href={href}
+                className={cn(
+                  'flex items-center gap-3.5 px-4 py-3.5 rounded-2xl transition-all cursor-pointer border-2 text-sm font-bold',
+                  isActive
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-600/15'
+                    : 'text-slate-650 border-transparent hover:bg-slate-50 hover:text-slate-900'
+                )}
+              >
+                <Icon size={20} className="shrink-0" />
+                <span>{label}</span>
+              </Link>
+            );
+          })}
+
+          {/* Salas selector */}
+          {activeNav === 'floor' && rooms.length > 0 && (
+            <div className="mt-6 space-y-2">
+              <span className="text-[10px] uppercase tracking-wider text-slate-450 font-extrabold block px-2 mb-2">
+                Salas y Zonas
+              </span>
+              {rooms.map((room) => {
+                const isSelected = activeRoom.id === room.id;
+                return (
+                  <button
+                    key={room.id}
+                    onClick={() => onRoomChange(room)}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all border-2 text-xs font-bold text-left cursor-pointer',
+                      isSelected
+                        ? 'bg-slate-100 border-slate-300 text-slate-900 shadow-sm'
+                        : 'text-slate-650 border-transparent hover:bg-slate-50 hover:text-slate-900'
+                    )}
+                  >
+                    <MapPin size={16} className={cn("shrink-0", isSelected ? "text-blue-600" : "text-slate-400")} />
+                    <span className="truncate">{room.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </nav>
+
+        <div className="h-[1.5px] bg-slate-100 my-4 w-full" />
+
+        {/* Footer Profile & Logout */}
+        <div className="flex flex-col gap-3 mt-auto">
+          {/* User profile details */}
+          <div className="flex items-center gap-3 px-2">
+            <div className="w-10 h-10 rounded-xl bg-slate-100 border-2 border-slate-200 flex items-center justify-center text-slate-800 font-extrabold text-sm shrink-0 shadow-inner">
+              U
+            </div>
+            <div className="min-w-0">
+              <span className="text-slate-900 font-bold text-xs block truncate leading-tight">Usuario Principal</span>
+              <span className="text-[9px] text-slate-500 font-bold uppercase block leading-none mt-0.5">Encargado</span>
+            </div>
+          </div>
+
+          {/* Logout button */}
+          <button
+            onClick={async () => {
+              if (window.confirm('¿Estás seguro de que quieres cerrar la sesión?')) {
+                await logout();
+              }
+            }}
+            className="flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all cursor-pointer border-2 border-transparent text-slate-650 hover:bg-red-50 hover:border-red-100 hover:text-red-650 text-xs font-bold"
+          >
+            <LogOut size={16} className="shrink-0" />
+            <span>Cerrar Sesión</span>
+          </button>
         </div>
-      </div>
+      </aside>
 
-      <div className="h-[1.5px] bg-slate-100 mb-4 w-full" />
-
-      {/* Navigation list */}
-      <nav className="flex flex-col gap-2 flex-1 overflow-y-auto">
+      {/* Mobile Bottom Navigation (hidden on desktop) */}
+      <div className="fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 z-[9999] flex items-center justify-around md:hidden px-2 pb-safe shadow-[0_-4px_16px_rgba(0,0,0,0.2)] text-white">
         {NAV_ITEMS.map(({ icon: Icon, label, id, href }) => {
           const isActive = activeNav === id;
           return (
@@ -74,74 +155,16 @@ export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
               key={id}
               href={href}
               className={cn(
-                'flex items-center justify-center md:justify-start gap-3.5 px-2 md:px-4 py-3.5 rounded-2xl transition-all cursor-pointer border-2 text-sm font-bold',
-                isActive
-                  ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-600/15'
-                  : 'text-slate-650 border-transparent hover:bg-slate-50 hover:text-slate-900'
+                'flex flex-col items-center justify-center gap-0.5 flex-1 py-1 transition-all',
+                isActive ? 'text-blue-400 font-black scale-105' : 'text-slate-400 font-bold hover:text-white'
               )}
             >
-              <Icon size={20} className="shrink-0" />
-              <span className="hidden md:inline">{label}</span>
+              <Icon size={20} className={cn("transition-transform")} />
+              <span className="text-[10px] tracking-tight">{label}</span>
             </Link>
           );
         })}
-
-        {/* Salas selector */}
-        {activeNav === 'floor' && rooms.length > 0 && (
-          <div className="mt-6 space-y-2">
-            <span className="text-[10px] uppercase tracking-wider text-slate-450 font-extrabold hidden md:block px-2 mb-2">
-              Salas y Zonas
-            </span>
-            {rooms.map((room) => {
-              const isSelected = activeRoom.id === room.id;
-              return (
-                <button
-                  key={room.id}
-                  onClick={() => onRoomChange(room)}
-                  className={cn(
-                    'w-full flex items-center justify-center md:justify-start gap-3 px-2 md:px-4 py-3 rounded-2xl transition-all border-2 text-xs font-bold text-left cursor-pointer',
-                    isSelected
-                      ? 'bg-slate-100 border-slate-300 text-slate-900 shadow-sm'
-                      : 'text-slate-650 border-transparent hover:bg-slate-50 hover:text-slate-900'
-                  )}
-                >
-                  <MapPin size={16} className={cn("shrink-0", isSelected ? "text-blue-600" : "text-slate-400")} />
-                  <span className="truncate hidden md:inline">{room.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </nav>
-
-      <div className="h-[1.5px] bg-slate-100 my-4 w-full" />
-
-      {/* Footer Profile & Logout */}
-      <div className="flex flex-col gap-3 mt-auto">
-        {/* User profile details */}
-        <div className="flex items-center justify-center md:justify-start gap-3 px-2">
-          <div className="w-10 h-10 rounded-xl bg-slate-100 border-2 border-slate-200 flex items-center justify-center text-slate-800 font-extrabold text-sm shrink-0 shadow-inner">
-            U
-          </div>
-          <div className="min-w-0 hidden md:block">
-            <span className="text-slate-900 font-bold text-xs block truncate leading-tight">Usuario Principal</span>
-            <span className="text-[9px] text-slate-500 font-bold uppercase block leading-none mt-0.5">Encargado</span>
-          </div>
-        </div>
-
-        {/* Logout button */}
-        <button
-          onClick={async () => {
-            if (window.confirm('¿Estás seguro de que quieres cerrar la sesión?')) {
-              await logout();
-            }
-          }}
-          className="flex items-center justify-center md:justify-start gap-3.5 px-2 md:px-4 py-3 rounded-2xl transition-all cursor-pointer border-2 border-transparent text-slate-650 hover:bg-red-50 hover:border-red-100 hover:text-red-650 text-xs font-bold"
-        >
-          <LogOut size={16} className="shrink-0" />
-          <span className="hidden md:inline">Cerrar Sesión</span>
-        </button>
       </div>
-    </aside>
+    </>
   );
 }
