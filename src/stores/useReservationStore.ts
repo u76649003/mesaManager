@@ -194,10 +194,13 @@ export const useReservationStore = create<ReservationState>()((set, get) => ({
       prepayment_amount:reservation.prepayment_amount|| 0,
       prepayment_reason:reservation.prepayment_reason|| null,
       payment_status:   reservation.payment_status   || 'no_payment_required',
-      payment_method:   (reservation as any).payment_method   || 'online',
-      bizum_phone:      (reservation as any).bizum_phone      || null,
-      bizum_name:       (reservation as any).bizum_name       || null,
     };
+
+    if (reservation.is_prepayment) {
+      sanitized.payment_method = (reservation as any).payment_method || 'online';
+      sanitized.bizum_phone = (reservation as any).bizum_phone || null;
+      sanitized.bizum_name = (reservation as any).bizum_name || null;
+    }
 
     // Only include waiter_id if it exists in the schema
     if ('waiter_id' in reservation) {

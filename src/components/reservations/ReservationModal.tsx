@@ -371,10 +371,13 @@ export function ReservationModal() {
         prepayment_amount: data.prepayment_amount || 0,
         prepayment_reason: data.prepayment_reason || null,
         payment_status:   prepaymentRequired ? 'pending' : 'no_payment_required',
-        payment_method:   data.payment_method,
-        bizum_phone:      data.bizum_phone || null,
-        bizum_name:       data.bizum_name || null,
       };
+
+      if (data.is_prepayment) {
+        sanitized.payment_method = data.payment_method;
+        sanitized.bizum_phone = data.bizum_phone || null;
+        sanitized.bizum_name = data.bizum_name || null;
+      }
 
       if (data.waiter_id) {
         sanitized.waiter_id = data.waiter_id;
