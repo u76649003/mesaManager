@@ -184,6 +184,9 @@ body {
   .app-shell {
     grid-template-columns: 1fr;
   }
+  .sidebar {
+    display: none !important;
+  }
   .main-content {
     padding-bottom: 76px !important;
   }
