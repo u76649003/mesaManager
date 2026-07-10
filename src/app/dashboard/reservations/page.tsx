@@ -280,7 +280,7 @@ export default function ReservationsCalendarPage() {
             </button>
           </div>
         </div>        {/* Botón para colapsar/desplegar filtros en móvil */}
-        <div className="flex md:hidden items-center justify-between p-3 bg-slate-50 border-b-2 border-slate-200 w-full px-5">
+        <div className="flex lg:hidden items-center justify-between p-3 bg-slate-50 border-b-2 border-slate-200 w-full px-5">
           <span className="text-[11px] font-black text-slate-800">
             🔍 {selectedRoomFilter === 'all' ? 'Todos los salones' : rooms.find(r => r.id === selectedRoomFilter)?.name || 'Salón'}
             {selectedTimeFilter !== 'all' ? ` · Hora: ${selectedTimeFilter}` : ''}
@@ -294,7 +294,7 @@ export default function ReservationsCalendarPage() {
         </div>
 
         {/* Panel de filtros (Siempre visible en PC, colapsable en Móvil) */}
-        <div className={cn("flex-col", showMobileFilters ? "flex" : "hidden md:flex")}>
+        <div className={cn("flex-col", showMobileFilters ? "flex" : "hidden lg:flex")}>
           {/* Filtro de Salones */}
           <div className="px-6 py-3 bg-white border-b-2 border-slate-200 flex flex-wrap items-center gap-3">
             <span className="text-slate-500 text-xs font-black uppercase tracking-wider">Filtrar por Salón:</span>

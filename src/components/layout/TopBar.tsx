@@ -292,7 +292,7 @@ export function TopBar({
           </div>
 
           {/* Date Selector (Mobile only) */}
-          <div className="flex md:hidden items-center gap-1.5 bg-slate-100 border-2 border-slate-200 rounded-xl p-0.5 shadow-inner">
+          <div className="flex lg:hidden items-center gap-1.5 bg-slate-100 border-2 border-slate-200 rounded-xl p-0.5 shadow-inner">
             <button
               onClick={goToPrevDay}
               className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-200 transition-colors cursor-pointer"
@@ -330,17 +330,17 @@ export function TopBar({
               className="w-2 h-2 rounded-full shrink-0"
               style={{ backgroundColor: activeShift.color }}
             />
-            <span className="text-[10px] md:text-xs font-semibold text-slate-500 truncate max-w-[200px]">
+            <span className="text-[10px] lg:text-xs font-semibold text-slate-500 truncate max-w-[200px]">
               Turno {activeShift.name} · {activeShift.start_time}–{activeShift.end_time}
             </span>
           </div>
         )}
 
         {/* Separator (Desktop only) */}
-        <div className="hidden md:block w-[1.5px] h-8 bg-slate-200" />
+        <div className="hidden lg:block w-[1.5px] h-8 bg-slate-200" />
 
         {/* Stats Grid on Mobile, Flex Row on Desktop */}
-        <div className="hidden md:flex items-center gap-1.5 md:gap-3 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
+        <div className="hidden lg:flex items-center gap-1.5 lg:gap-3 w-full lg:w-auto border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0">
           <Stat
             icon={<TableProperties size={14} />}
             value={`${occupiedTables}/${totalTables}`}
@@ -363,7 +363,7 @@ export function TopBar({
       </div>
 
       {/* Date selector (Desktop only) */}
-      <div className="hidden md:flex items-center gap-3">
+      <div className="hidden lg:flex items-center gap-3">
         <div className={cn(
           "flex items-center gap-2 bg-slate-100 border-2 border-slate-200 rounded-2xl p-1 shadow-inner transition-colors",
           isDateClosed(selectedDate) && "bg-red-50 border-red-200"
@@ -405,14 +405,14 @@ export function TopBar({
       </div>
 
       {/* Right section: Mode Switcher & Reset */}
-      <div className="flex items-center justify-between md:justify-end gap-2 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
+      <div className="flex items-center justify-between lg:justify-end gap-2 w-full lg:w-auto border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0">
         <div className="flex items-center bg-slate-100 border-2 border-slate-200 rounded-2xl p-1 gap-1">
           {(['service', 'edit'] as const).map((m) => (
             <button
               key={m}
               onClick={() => onModeChange(m)}
               className={cn(
-                'flex items-center gap-1.5 px-3 md:px-4.5 py-1.5 md:py-2.5 rounded-xl text-xs font-extrabold transition-all border border-transparent cursor-pointer',
+                'flex items-center gap-1.5 px-3 lg:px-4.5 py-1.5 lg:py-2.5 rounded-xl text-xs font-extrabold transition-all border border-transparent cursor-pointer',
                 mode === m
                   ? m === 'edit'
                     ? 'bg-amber-100 text-amber-800 border-2 border-amber-300 shadow-sm'
@@ -421,7 +421,7 @@ export function TopBar({
               )}
             >
               {m === 'service' ? <Eye size={14} /> : <Edit3 size={14} />}
-              <span className="text-[10px] md:text-xs">{m === 'service' ? 'Ver Mesas' : 'Editar Plano'}</span>
+              <span className="text-[10px] lg:text-xs">{m === 'service' ? 'Ver Mesas' : 'Editar Plano'}</span>
             </button>
           ))}
         </div>
@@ -439,7 +439,7 @@ export function TopBar({
           <button
             onClick={resetView}
             title="Restablecer vista"
-            className="w-8 h-8 md:w-9.5 md:h-9.5 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-700 hover:text-slate-950 hover:bg-slate-50 transition-colors text-xs md:text-sm font-bold cursor-pointer"
+            className="w-8 h-8 lg:w-9.5 lg:h-9.5 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-700 hover:text-slate-950 hover:bg-slate-50 transition-colors text-xs lg:text-sm font-bold cursor-pointer"
           >
             ⊡
           </button>
