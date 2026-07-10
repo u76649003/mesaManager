@@ -172,135 +172,19 @@ export default function BillingPage() {
               )}
             </div>
 
-            {/* Listado de Planes */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-black text-slate-900">Planes disponibles</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                {/* Plan Basic */}
-                <div className={`p-6 rounded-2xl border-2 flex flex-col justify-between h-full bg-white transition-all ${
-                  billingData.tenant.subscription_plan === 'basic' && billingData.tenant.subscription_status === 'active'
-                    ? 'border-blue-500 shadow-md shadow-blue-50' 
-                    : 'border-slate-200 hover:border-slate-300'
-                }`}>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="text-lg font-black text-slate-900">Basic</h4>
-                        <p className="text-slate-500 text-sm mt-1 font-bold">Perfecto para pequeños cafés y bares.</p>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-xs font-extrabold text-slate-700">
-                        Sencillo
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-3xl font-black text-slate-900">29€</span>
-                      <span className="text-slate-500 text-sm font-bold">/ mes</span>
-                    </div>
-                    <ul className="space-y-2.5 pt-4 border-t-2 border-slate-100">
-                      {[
-                        'Hasta 15 mesas configurables',
-                        'Gestión básica de reservas',
-                        'Soporte por correo electrónico',
-                        '1 salón/sala'
-                      ].map((feature) => (
-                        <li key={feature} className="flex items-center gap-2.5 text-slate-700 text-sm font-bold">
-                          <Check size={16} className="text-blue-600 shrink-0" />
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="mt-8">
-                    <button
-                      onClick={() => handleSubscribe('basic')}
-                      disabled={actionLoading !== null || (billingData.tenant.subscription_plan === 'basic' && billingData.tenant.subscription_status === 'active')}
-                      className={`w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                        billingData.tenant.subscription_plan === 'basic' && billingData.tenant.subscription_status === 'active'
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                          : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20'
-                      }`}
-                    >
-                      {actionLoading === 'basic' ? (
-                        <Loader2 size={16} className="animate-spin text-white" />
-                      ) : billingData.tenant.subscription_plan === 'basic' && billingData.tenant.subscription_status === 'active' ? (
-                        <span>Suscrito</span>
-                      ) : (
-                        <>
-                          <span>Contratar Plan Basic</span>
-                          <ArrowRight size={16} />
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Plan Pro */}
-                <div className={`p-6 rounded-2xl border flex flex-col justify-between h-full bg-slate-900 relative transition-all ${
-                  billingData.tenant.subscription_plan === 'pro' && billingData.tenant.subscription_status === 'active'
-                    ? 'border-indigo-500 ring-2 ring-indigo-500/20' 
-                    : 'border-slate-800 hover:border-slate-700'
-                }`}>
-                  <div className="absolute -top-3 right-4 px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center gap-1 shadow-md">
-                    <Sparkles size={12} />
-                    <span>Recomendado</span>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="text-lg font-bold text-white">Pro</h4>
-                        <p className="text-slate-400 text-sm mt-1">Para restaurantes medianos y grandes.</p>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-xs font-semibold text-indigo-400">
-                        Avanzado
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-3xl font-extrabold text-white">49€</span>
-                      <span className="text-slate-400 text-sm">/ mes</span>
-                    </div>
-                    <ul className="space-y-2.5 pt-4 border-t border-slate-800">
-                      {[
-                        'Salones y salas ilimitadas',
-                        'Mesas ilimitadas',
-                        'Gestión avanzada de reservas con histórico',
-                        'Auditoría y log de reservas',
-                        'Soporte prioritario 24/7'
-                      ].map((feature) => (
-                        <li key={feature} className="flex items-center gap-2.5 text-slate-300 text-sm">
-                          <Check size={16} className="text-indigo-400 shrink-0" />
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="mt-8">
-                    <button
-                      onClick={() => handleSubscribe('pro')}
-                      disabled={actionLoading !== null || (billingData.tenant.subscription_plan === 'pro' && billingData.tenant.subscription_status === 'active')}
-                      className={`w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                        billingData.tenant.subscription_plan === 'pro' && billingData.tenant.subscription_status === 'active'
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                          : 'bg-indigo-650 hover:bg-indigo-600 text-white shadow-lg shadow-indigo-900/30 ring-1 ring-indigo-500/50'
-                      }`}
-                    >
-                      {actionLoading === 'pro' ? (
-                        <Loader2 size={16} className="animate-spin text-white" />
-                      ) : billingData.tenant.subscription_plan === 'pro' && billingData.tenant.subscription_status === 'active' ? (
-                        <span>Suscrito</span>
-                      ) : (
-                        <>
-                          <span>Contratar Plan Pro</span>
-                          <ArrowRight size={16} />
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-
+            {/* Listado de Planes (Fase de construcción) */}
+            <div className="p-8 rounded-3xl bg-slate-900 text-white border border-slate-800 shadow-xl flex flex-col items-center text-center space-y-4 max-w-2xl mx-auto">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <Sparkles size={28} className="animate-pulse" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-black">Planes de Suscripción en Construcción</h3>
+                <p className="text-slate-400 text-sm max-w-md mx-auto leading-relaxed">
+                  Actualmente estamos mejorando nuestro sistema de pasarela de pagos. Tu cuenta ha sido activada con acceso <strong className="text-indigo-400 font-extrabold">Premium</strong> completo de forma temporal para que disfrutes de todas las funcionalidades.
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-xs font-semibold text-indigo-400">
+                <span>⚡ Beneficios Pro Activos</span>
               </div>
             </div>
 
