@@ -131,7 +131,7 @@ export function ReservationList({ onReservationClick }: ReservationListProps) {
       return a.time.localeCompare(b.time);
     });
 
-  const finalizedReservations = searched.filter((r) => ['completed', 'cancelled', 'no_show'].includes(r.status));
+  const finalizedReservations = searched.filter((r) => ['completed', 'no_show'].includes(r.status));
 
   const statusGroups = {
     seated:    unfilteredActive.filter((r) => r.status === 'seated'),
@@ -285,11 +285,11 @@ export function ReservationList({ onReservationClick }: ReservationListProps) {
                 </div>
               )}
 
-              {/* Sección Finalizadas / Canceladas */}
+              {/* Sección Finalizadas */}
               {finalizedReservations.length > 0 && (
                 <div className="mt-6 pt-4 border-t-2 border-slate-200">
                   <h3 className="text-xs font-black text-slate-550 uppercase tracking-wider mb-2.5 px-1">
-                    Finalizadas / Canceladas ({finalizedReservations.length})
+                    Finalizadas ({finalizedReservations.length})
                   </h3>
                   <div className="space-y-3 opacity-60 hover:opacity-85 transition-opacity">
                     {finalizedReservations.map((reservation, index) => (
@@ -325,8 +325,8 @@ function ReservationCard({
   onClick: () => void;
   nowTime: Date;
 }) {
+  const { reservations, updateReservation, removeReservation, openModal, selectedDate } = useReservationStore();
   const statusColor = getStatusColor(reservation.status);
-  const { reservations, updateReservation, openModal, selectedDate } = useReservationStore();
   const { seatTable, clearTable, tableGroups } = useFloorStore();
   const [isNotesExpanded, setIsNotesExpanded] = useState(false);
 
@@ -399,8 +399,8 @@ function ReservationCard({
 
   const handleCancelClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('¿Estás seguro de que quieres cancelar esta reserva?')) {
-      await updateReservation(reservation.id, { status: 'cancelled' });
+    if (confirm('¿Estás seguro de que quieres cancelar y eliminar esta reserva?')) {
+      await removeReservation(reservation.id);
       if (reservation.table_id) {
         await clearTable(reservation.table_id);
       } else if (reservation.group_id) {

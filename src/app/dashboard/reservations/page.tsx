@@ -832,7 +832,7 @@ function DayCalendarView({
     );
   };
 
-  const { reservations: allReservationsStore, updateReservation } = useReservationStore();
+  const { reservations: allReservationsStore, updateReservation, removeReservation } = useReservationStore();
   const pendingPaymentRes = allReservationsStore.filter(
     (r) => r.date === dateStr && r.is_prepayment && r.payment_status === 'pending'
   );
@@ -928,8 +928,8 @@ function DayCalendarView({
                       onClick={async (e) => {
                         e.stopPropagation();
                         if (window.confirm("¿Seguro que quieres cancelar esta reserva?")) {
-                          await updateReservation(res.id, { status: 'cancelled' });
-                          toast.success("Reserva cancelada.");
+                          await removeReservation(res.id);
+                          toast.success("Reserva eliminada.");
                         }
                       }}
                       className="py-2 px-3 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-750 text-xs font-black transition-colors cursor-pointer text-center border border-slate-200 hover:border-red-200"
