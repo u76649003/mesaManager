@@ -58,6 +58,7 @@ export const useReservationStore = create<ReservationState>()((set, get) => ({
   selectedDate: format(new Date(), 'yyyy-MM-dd'),
   selectedShiftId: null,
   selectedRoomId: null,
+  isModalOpen: false,
   selectedTime: null,
   viewMode: 'day',
   selectedStatusFilter: 'all',

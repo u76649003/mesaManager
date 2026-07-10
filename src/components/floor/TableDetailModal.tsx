@@ -219,7 +219,7 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
                     </div>
                   )}
 
-                  {table.current_reservation.is_prepayment && table.current_reservation.prepayment_amount > 0 && (
+                  {table.current_reservation.is_prepayment && (table.current_reservation.prepayment_amount ?? 0) > 0 && (
                     <div className="mt-3 pt-2.5 border-t border-slate-200 space-y-1 text-[11px] text-emerald-800 font-bold bg-emerald-50/50 p-2.5 rounded-xl border border-emerald-200">
                       <p className="flex items-center gap-1 font-black">
                         💵 Anticipo Cobrado: {table.current_reservation.prepayment_amount} €
