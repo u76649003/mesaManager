@@ -10,6 +10,7 @@ import { es } from 'date-fns/locale';
 import { Clock, Users, Hash, MapPin, Plus, Search, MessageSquare } from 'lucide-react';
 import { useFloorStore } from '@/stores/useFloorStore';
 import { useTableTimer } from '@/hooks/useTableTimer';
+import { toast } from 'sonner';
 
 interface ReservationListProps {
   onReservationClick?: (reservation: Reservation) => void;

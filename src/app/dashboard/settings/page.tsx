@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import type { Room, TableType, Shift } from '@/types';
 import { cn } from '@/lib/utils';
-import toast from 'react-hot-toast';
+import { toast } from 'sonner';
 
 export default function SettingsPage() {
   // Stores
