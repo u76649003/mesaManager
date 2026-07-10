@@ -23,7 +23,7 @@ BEGIN
   INTO max_num
   FROM reservations
   WHERE tenant_id = NEW.tenant_id
-    AND reservation_number ~ '^RES-' || year_str;
+    AND reservation_number ~ ('^RES-' || year_str);
 
   NEW.reservation_number := 'RES-' || year_str || '-' || LPAD(max_num::TEXT, 6, '0');
   RETURN NEW;
