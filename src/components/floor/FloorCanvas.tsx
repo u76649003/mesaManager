@@ -172,7 +172,7 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
       activationConstraint: { distance: mode === 'edit' ? 8 : 1000 }, // En modo servicio, deshabilitar drag
     }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 8 },
+      activationConstraint: mode === 'edit' ? { delay: 100, tolerance: 8 } : { distance: 1000 },
     })
   );
 

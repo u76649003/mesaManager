@@ -180,15 +180,12 @@ body {
   gap: 16px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .app-shell {
-    grid-template-columns: 80px 1fr;
+    grid-template-columns: 1fr;
   }
-  .sidebar {
-    padding: 16px 8px;
-  }
-  .sidebar span {
-    display: none;
+  .main-content {
+    padding-bottom: 76px !important;
   }
   .dashboard-split {
     grid-template-columns: 1fr;

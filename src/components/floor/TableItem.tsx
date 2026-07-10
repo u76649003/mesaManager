@@ -167,6 +167,7 @@ export function TableItem({ table, isSelected, isDragging, isEditMode, onClick, 
       : `rotate(${table.rotation}deg)`,
     cursor: isEditMode ? 'grab' : 'pointer',
     zIndex: isSelected ? 20 : isDragging ? 30 : 10,
+    touchAction: 'none',
   };
 
   return (
