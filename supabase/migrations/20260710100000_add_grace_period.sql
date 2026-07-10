@@ -1,0 +1,1 @@
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS grace_period_minutes INT DEFAULT 10;

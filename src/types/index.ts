@@ -26,6 +26,7 @@ export interface Tenant {
   subscription_status: 'active' | 'inactive' | 'past_due' | 'cancelled';
   subscription_ends_at?: string;
   default_reservation_duration: number;
+  grace_period_minutes: number;
   max_party_size: number;
   created_at: string;
 }

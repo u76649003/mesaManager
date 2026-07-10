@@ -17,9 +17,11 @@ import {
   Clock,
   Check,
   ChevronRight,
+  Building2,
 } from 'lucide-react';
 import type { Room, TableType, Shift } from '@/types';
 import { cn } from '@/lib/utils';
+import toast from 'react-hot-toast';
 
 export default function SettingsPage() {
   // Stores
@@ -118,17 +120,45 @@ export default function SettingsPage() {
   };
 
   // Local Page State
-  const [activeTab, setActiveTab] = useState<'rooms' | 'tableTypes' | 'shifts'>('rooms');
+  const [activeTab, setActiveTab] = useState<'general' | 'rooms' | 'tableTypes' | 'shifts'>('rooms');
   const [activeRoom, setActiveRoom] = useState<Room>({ id: 'temp' } as any);
   const [roomImageFile, setRoomImageFile] = useState<File | null>(null);
   const [roomImagePreview, setRoomImagePreview] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [gracePeriod, setGracePeriod] = useState<number>(10);
+  const [tenantId, setTenantId] = useState<string>('');
 
   useEffect(() => {
     if (rooms && rooms.length > 0 && (!activeRoom || activeRoom.id === 'temp')) {
       setActiveRoom(rooms[0]);
     }
   }, [rooms, activeRoom]);
+
+  useEffect(() => {
+    async function loadTenant() {
+      const { createClient } = await import('@/lib/supabase/client');
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase.from('user_profiles').select('tenant_id').eq('id', user.id).single();
+      if (profile) {
+        setTenantId(profile.tenant_id);
+        const { data: tenant } = await supabase.from('tenants').select('grace_period_minutes').eq('id', profile.tenant_id).single();
+        if (tenant) {
+          setGracePeriod(tenant.grace_period_minutes || 10);
+        }
+      }
+    }
+    loadTenant();
+  }, []);
+
+  const saveGeneralSettings = async () => {
+    if (!tenantId) return;
+    const { createClient } = await import('@/lib/supabase/client');
+    const supabase = createClient();
+    await supabase.from('tenants').update({ grace_period_minutes: gracePeriod }).eq('id', tenantId);
+    toast.success('Ajustes guardados correctamente');
+  };
 
   const handleRoomImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -363,6 +393,7 @@ export default function SettingsPage() {
           {/* Tabs Sidebar */}
           <div className="w-64 border-r-2 border-slate-200 p-4 space-y-2 bg-white shrink-0">
             {[
+              { id: 'general', label: 'General', icon: Building2 },
               { id: 'rooms', label: 'Salas y Espacios', icon: Layout },
               { id: 'tableTypes', label: 'Tipos de Mesa', icon: Layers },
               { id: 'shifts', label: 'Turnos y Horarios', icon: Clock },
@@ -400,6 +431,52 @@ export default function SettingsPage() {
           {/* Configuration Workspace */}
           <div className="flex-1 overflow-y-auto p-6 md:p-8">
             <AnimatePresence mode="wait">
+              {activeTab === 'general' && (
+                <motion.div
+                  key="general"
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  className="space-y-6"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-black text-slate-900">Ajustes Generales</h2>
+                      <p className="text-slate-500 text-sm mt-0.5 font-bold">
+                        Configuración global del restaurante
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 max-w-xl shadow-md">
+                    <div>
+                      <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-2">
+                        Tiempo de cortesía para reservas (minutos)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={gracePeriod}
+                        onChange={(e) => setGracePeriod(parseInt(e.target.value) || 0)}
+                        className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none font-bold text-slate-900"
+                      />
+                      <p className="text-xs text-slate-500 mt-2">
+                        Tiempo de espera máximo antes de que una mesa reservada se libere.
+                      </p>
+                    </div>
+
+                    <div className="flex justify-end pt-4 border-t border-slate-100">
+                      <button
+                        onClick={saveGeneralSettings}
+                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors shadow-sm"
+                      >
+                        Guardar Ajustes
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
               {activeTab === 'rooms' && (
                 <motion.div
                   key="rooms"
