@@ -205,11 +205,33 @@ export const useReservationStore = create<ReservationState>()((set, get) => ({
     }
 
     // Insert to database - trigger sets reservation_number automatically
-    const { data, error } = await supabase
+    let data: any = null;
+    let error: any = null;
+
+    const result = await supabase
       .from('reservations')
       .insert(sanitized)
       .select('*, room:rooms(*), shift:shifts(*), table:tables!reservations_table_id_fkey(*), waiter:waiters(*)')
       .single();
+
+    data = result.data;
+    error = result.error;
+
+    if (error && (error.message.includes('bizum_name') || error.message.includes('schema cache') || error.message.includes('column'))) {
+      console.warn('Falling back store insert without bizum columns...');
+      const fallbackSanitized = { ...sanitized };
+      delete fallbackSanitized.payment_method;
+      delete fallbackSanitized.bizum_phone;
+      delete fallbackSanitized.bizum_name;
+
+      const retryResult = await supabase
+        .from('reservations')
+        .insert(fallbackSanitized)
+        .select('*, room:rooms(*), shift:shifts(*), table:tables!reservations_table_id_fkey(*), waiter:waiters(*)')
+        .single();
+      data = retryResult.data;
+      error = retryResult.error;
+    }
 
     if (error) {
       console.error('Error adding reservation:', error.message, error.details, error.hint);
@@ -244,10 +266,24 @@ export const useReservationStore = create<ReservationState>()((set, get) => ({
     }
 
     const supabase = createClient();
-    const { error } = await supabase
+    let { error } = await supabase
       .from('reservations')
       .update(dbUpdates)
       .eq('id', id);
+
+    if (error && (error.message.includes('bizum_name') || error.message.includes('schema cache') || error.message.includes('column'))) {
+      console.warn('Falling back update without bizum columns...');
+      const fallbackUpdates = { ...dbUpdates };
+      delete fallbackUpdates.payment_method;
+      delete fallbackUpdates.bizum_phone;
+      delete fallbackUpdates.bizum_name;
+
+      const retryResult = await supabase
+        .from('reservations')
+        .update(fallbackUpdates)
+        .eq('id', id);
+      error = retryResult.error;
+    }
 
     if (error) {
       console.error('Error updating reservation in Supabase:', error.message, error.details);

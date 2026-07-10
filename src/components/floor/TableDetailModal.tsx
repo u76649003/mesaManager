@@ -81,7 +81,7 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[10000]"
             onClick={onClose}
           />
           <motion.div
@@ -89,7 +89,7 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 15 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+            className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-white border-2 border-slate-350 rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden">
@@ -237,73 +237,83 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
 
               {/* Acciones principales - Botones Grandes */}
               <div className="p-4 space-y-2.5">
-                {table.status === 'available' && (
+                {mode === 'edit' ? (
                   <>
-                    {isToday && (
+                    <ActionButton
+                      icon={<CheckCircle2 size={18} />}
+                      label="Actualizar Mesa"
+                      color="indigo"
+                      onClick={onClose}
+                    />
+                    <ActionButton
+                      icon={<Trash2 size={18} />}
+                      label="Eliminar Mesa del Plano"
+                      color="red"
+                      onClick={handleDelete}
+                    />
+                  </>
+                ) : (
+                  <>
+                    {table.status === 'available' && (
+                      <>
+                        {isToday && (
+                          <ActionButton
+                            icon={<CheckCircle2 size={18} />}
+                            label="Sentar Clientes Ahora"
+                            color="indigo"
+                            onClick={handleSeat}
+                          />
+                        )}
+                        <ActionButton
+                          icon={<CalendarPlus size={18} />}
+                          label="Crear Nueva Reserva"
+                          color="slate"
+                          onClick={() => { openModal(undefined, table.id); onClose(); }}
+                        />
+                      </>
+                    )}
+
+                    {table.status === 'occupied' && (
+                      <>
+                        <ActionButton
+                          icon={<CheckCircle2 size={18} />}
+                          label="Liberar y Limpiar Mesa"
+                          color="emerald"
+                          onClick={handleClear}
+                        />
+                        <ActionButton
+                          icon={<RefreshCw size={18} />}
+                          label="Cambiar a Limpieza"
+                          color="violet"
+                          onClick={handleSetCleaning}
+                        />
+                      </>
+                    )}
+
+                    {table.status === 'reserved' && (
+                      isToday ? (
+                        <ActionButton
+                          icon={<CheckCircle2 size={18} />}
+                          label="Sentar Clientes (Confirmar Llegada)"
+                          color="indigo"
+                          onClick={handleSeat}
+                        />
+                      ) : (
+                        <div className="text-xs text-slate-500 font-bold text-center py-3 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
+                          Solo se pueden sentar clientes el día de hoy
+                        </div>
+                      )
+                    )}
+
+                    {table.status === 'cleaning' && (
                       <ActionButton
                         icon={<CheckCircle2 size={18} />}
-                        label="Sentar Clientes Ahora"
-                        color="indigo"
-                        onClick={handleSeat}
+                        label="Marcar como Disponible"
+                        color="emerald"
+                        onClick={handleSetAvailable}
                       />
                     )}
-                    <ActionButton
-                      icon={<CalendarPlus size={18} />}
-                      label="Crear Nueva Reserva"
-                      color="slate"
-                      onClick={() => { openModal(undefined, table.id); onClose(); }}
-                    />
                   </>
-                )}
-
-                {table.status === 'occupied' && (
-                  <>
-                    <ActionButton
-                      icon={<CheckCircle2 size={18} />}
-                      label="Liberar y Limpiar Mesa"
-                      color="emerald"
-                      onClick={handleClear}
-                    />
-                    <ActionButton
-                      icon={<RefreshCw size={18} />}
-                      label="Cambiar a Limpieza"
-                      color="violet"
-                      onClick={handleSetCleaning}
-                    />
-                  </>
-                )}
-
-                {table.status === 'reserved' && (
-                  isToday ? (
-                    <ActionButton
-                      icon={<CheckCircle2 size={18} />}
-                      label="Sentar Clientes (Confirmar Llegada)"
-                      color="indigo"
-                      onClick={handleSeat}
-                    />
-                  ) : (
-                    <div className="text-xs text-slate-500 font-bold text-center py-3 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
-                      Solo se pueden sentar clientes el día de hoy
-                    </div>
-                  )
-                )}
-
-                {table.status === 'cleaning' && (
-                  <ActionButton
-                    icon={<CheckCircle2 size={18} />}
-                    label="Marcar como Disponible"
-                    color="emerald"
-                    onClick={handleSetAvailable}
-                  />
-                )}
-
-                {mode === 'edit' && (
-                  <ActionButton
-                    icon={<Trash2 size={18} />}
-                    label="Eliminar Mesa del Plano"
-                    color="red"
-                    onClick={handleDelete}
-                  />
                 )}
               </div>
             </div>

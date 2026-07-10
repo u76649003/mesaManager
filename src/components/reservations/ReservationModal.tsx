@@ -44,6 +44,7 @@ export function ReservationModal() {
     closeModal,
     addReservation,
     updateReservation,
+    removeReservation,
   } = useReservationStore();
 
   const { rooms, tables, tableGroups, mergeTables, splitGroup } = useFloorStore();
@@ -106,6 +107,33 @@ export function ReservationModal() {
   });
 
   const partySize = watch('party_size') || 2;
+  const watchShiftId = watch('shift_id');
+  const watchTime = watch('time');
+
+  useEffect(() => {
+    if (watchShiftId) {
+      const shift = shifts.find((s) => s.id === watchShiftId);
+      if (shift) {
+        // Check if current time is within shift range
+        const [sh, sm] = shift.start_time.split(':').map(Number);
+        const [eh, em] = shift.end_time.split(':').map(Number);
+        const startMin = sh * 60 + sm;
+        let endMin = eh * 60 + em;
+        if (endMin <= startMin) endMin += 1440;
+
+        if (watchTime) {
+          const [th, tm] = watchTime.split(':').map(Number);
+          const timeMin = th * 60 + tm;
+          const isWithin = timeMin >= startMin && timeMin <= endMin;
+          if (!isWithin) {
+            setValue('time', shift.start_time);
+          }
+        } else {
+          setValue('time', shift.start_time);
+        }
+      }
+    }
+  }, [watchShiftId, setValue, shifts]);
 
   // Initialize form and local selected tables
   useEffect(() => {
@@ -195,7 +223,6 @@ export function ReservationModal() {
   }, [editingReservation, prefillTableIds, isModalOpen, reset, selectedDate, tables, rooms, tableGroups]);
 
   // Set the correct shift when duration or time changes
-  const watchTime = watch('time');
   const watchDate = watch('date');
   const watchIsPrepayment = watch('is_prepayment');
   const watchPrefillEmail = watch('guest_email');
@@ -353,11 +380,33 @@ export function ReservationModal() {
         sanitized.waiter_id = data.waiter_id;
       }
 
-      const { data: insertedData, error } = await supabase
+      let insertedData: any = null;
+      let error: any = null;
+
+      const result = await supabase
         .from('reservations')
         .insert(sanitized)
         .select('*, room:rooms(*), shift:shifts(*), table:tables!reservations_table_id_fkey(*), waiter:waiters(*)')
         .single();
+      
+      insertedData = result.data;
+      error = result.error;
+
+      if (error && (error.message.includes('bizum_name') || error.message.includes('schema cache') || error.message.includes('column'))) {
+        console.warn('Falling back insert without bizum columns in modal...');
+        const fallbackSanitized = { ...sanitized };
+        delete fallbackSanitized.payment_method;
+        delete fallbackSanitized.bizum_phone;
+        delete fallbackSanitized.bizum_name;
+
+        const retryResult = await supabase
+          .from('reservations')
+          .insert(fallbackSanitized)
+          .select('*, room:rooms(*), shift:shifts(*), table:tables!reservations_table_id_fkey(*), waiter:waiters(*)')
+          .single();
+        insertedData = retryResult.data;
+        error = retryResult.error;
+      }
 
       if (error) {
         toast.error('Error al guardar la reserva: ' + error.message);
@@ -395,19 +444,22 @@ export function ReservationModal() {
     );
 
   const getTableDimensions = (cap: number) => {
-    if (cap <= 2) return { width: 44, height: 44 };
-    if (cap <= 4) return { width: 56, height: 56 };
-    if (cap <= 6) return { width: 75, height: 50 };
-    return { width: 90, height: 56 };
+    if (cap <= 2) return { width: 55, height: 55 };
+    if (cap <= 4) return { width: 70, height: 70 };
+    if (cap <= 6) return { width: 95, height: 65 };
+    return { width: 110, height: 70 };
   };
 
   const getTimeSlotsForModal = () => {
     if (!shifts || shifts.length === 0) return [];
     
     const slots: string[] = [];
-    shifts.forEach((shift) => {
-      if (!shift.is_active) return;
-      
+    // If a specific shift is selected, only generate slots for that shift!
+    const activeShifts = watchShiftId
+      ? shifts.filter((s) => s.id === watchShiftId && s.is_active)
+      : shifts.filter((s) => s.is_active);
+
+    activeShifts.forEach((shift) => {
       const [sh, sm] = shift.start_time.split(':').map(Number);
       const [eh, em] = shift.end_time.split(':').map(Number);
       
@@ -579,7 +631,7 @@ export function ReservationModal() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[10000]"
             onClick={closeModal}
           />
 
@@ -589,7 +641,7 @@ export function ReservationModal() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 15 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto"
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-4 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-white border-2 border-slate-350 rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden my-8">
@@ -812,7 +864,7 @@ export function ReservationModal() {
                     </div>
 
                     {/* Contenedor del mapa de sala / lista */}
-                    <div className="h-[250px] relative border-2 border-slate-300 rounded-3xl overflow-hidden bg-slate-200/50 shadow-inner">
+                    <div className="h-[380px] relative border-2 border-slate-350 rounded-3xl overflow-hidden bg-slate-205/50 shadow-inner">
                       {viewMode === 'map' ? (
                         /* VISTA PLANO DE LA SALA */
                         (() => {
@@ -883,8 +935,8 @@ export function ReservationModal() {
                                     )}
                                     title={`Mesa ${table.label} (${cap}p)`}
                                   >
-                                    <span className="leading-none font-black">{table.label}</span>
-                                    <span className="leading-none text-[7.5px] opacity-80 mt-0.5">{cap}p</span>
+                                    <span className="leading-none font-black text-xs">{table.label}</span>
+                                    <span className="leading-none text-[9.5px] opacity-80 mt-0.5">{cap}p</span>
                                   </button>
                                 );
                               })}
@@ -1076,23 +1128,40 @@ export function ReservationModal() {
                 )}
 
                 {/* Botones */}
-                <div className="flex gap-3.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    className="flex-1 py-3.5 rounded-2xl border-2 border-slate-300 text-slate-700 bg-slate-100 hover:bg-slate-200 font-black text-sm transition-colors cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                  <motion.button
-                    type="submit"
-                    disabled={isSubmitting || isClosedDaySelected}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="flex-1 py-3.5 rounded-2xl bg-blue-600 border-2 border-blue-600 text-white font-black text-sm shadow-md hover:bg-blue-700 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    {isSubmitting ? 'Guardando...' : editingReservation ? 'Actualizar Reserva' : 'Guardar y Confirmar'}
-                  </motion.button>
+                <div className="space-y-2 pt-2">
+                  <div className="flex gap-3.5">
+                    <button
+                      type="button"
+                      onClick={handleClose}
+                      className="flex-1 py-3.5 rounded-2xl border-2 border-slate-300 text-slate-700 bg-slate-100 hover:bg-slate-200 font-black text-sm transition-colors cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <motion.button
+                      type="submit"
+                      disabled={isSubmitting || isClosedDaySelected}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="flex-1 py-3.5 rounded-2xl bg-blue-600 border-2 border-blue-600 text-white font-black text-sm shadow-md hover:bg-blue-700 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      {isSubmitting ? 'Guardando...' : editingReservation ? 'Actualizar Reserva' : 'Guardar y Confirmar'}
+                    </motion.button>
+                  </div>
+
+                  {editingReservation && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm('¿Estás seguro de que deseas eliminar esta reserva por completo?')) {
+                          await removeReservation(editingReservation.id);
+                          handleClose();
+                        }
+                      }}
+                      className="w-full py-3 bg-red-50 hover:bg-red-100 border-2 border-red-200 hover:border-red-300 text-red-650 rounded-2xl text-xs font-black transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      🗑️ Eliminar Reserva por Completo
+                    </button>
+                  )}
                 </div>
               </form>
             )}
