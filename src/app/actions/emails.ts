@@ -43,11 +43,25 @@ async function sendMail({ to, subject, html, tenantId }: SendEmailParams) {
       const supabase = await createClient();
       const { data: tenant } = await supabase
         .from('tenants')
-        .select('name, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from')
+        .select('name, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, google_email, google_refresh_token')
         .eq('id', tenantId)
         .single();
 
-      if (tenant && tenant.smtp_host && tenant.smtp_user && tenant.smtp_pass) {
+      if (tenant && tenant.google_refresh_token && tenant.google_email) {
+        // Use Google OAuth2 for sending emails
+        transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            type: 'OAuth2',
+            user: tenant.google_email,
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            refreshToken: tenant.google_refresh_token,
+          },
+        } as any);
+        fromAddress = tenant.smtp_from || `"${tenant.name || 'Restaurante'}" <${tenant.google_email}>`;
+      } else if (tenant && tenant.smtp_host && tenant.smtp_user && tenant.smtp_pass) {
+        // Fallback to manual SMTP configuration
         const port = Number(tenant.smtp_port) || 587;
         transporter = nodemailer.createTransport({
           host: tenant.smtp_host,
@@ -60,6 +74,7 @@ async function sendMail({ to, subject, html, tenantId }: SendEmailParams) {
         });
         fromAddress = tenant.smtp_from || `"${tenant.name || 'Restaurante'}" <${tenant.smtp_user}>`;
       }
+
     } catch (e) {
       console.error('Error fetching tenant SMTP settings:', e);
     }
