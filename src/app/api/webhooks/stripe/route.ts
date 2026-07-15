@@ -109,6 +109,67 @@ export async function POST(req: NextRequest) {
         break;
       }
 
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const reservationId = session.metadata?.reservationId;
+        
+        if (reservationId) {
+          console.log(`🔔 Webhook: Pago de Stripe completado para la reserva ${reservationId}`);
+          const adminSupabase = createAdminClient();
+          
+          // 1. Obtener la reserva y el tenant para el correo
+          const { data: res } = await adminSupabase
+            .from('reservations')
+            .select('*, tenant:tenants(*)')
+            .eq('id', reservationId)
+            .single();
+
+          if (res && res.payment_status !== 'paid') {
+            // 2. Actualizar a pagado y confirmado en Supabase
+            const { error: updateError } = await adminSupabase
+              .from('reservations')
+              .update({
+                payment_status: 'paid',
+                status: 'confirmed',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', reservationId);
+
+            if (updateError) {
+              console.error('Error al actualizar reserva en el webhook:', updateError);
+            } else {
+              console.log('✅ Reserva actualizada a PAGADA y CONFIRMADA vía webhook.');
+              
+              // 3. Enviar correo de confirmación final
+              if (res.guest_email) {
+                try {
+                  const { sendReservationConfirmationEmail } = await import('@/app/actions/emails');
+                  let roomName = 'Principal';
+                  if (res.room_id) {
+                    const { data: room } = await adminSupabase
+                      .from('rooms')
+                      .select('name')
+                      .eq('id', res.room_id)
+                      .single();
+                    if (room) roomName = room.name;
+                  }
+
+                  await sendReservationConfirmationEmail({
+                    ...res,
+                    payment_status: 'paid',
+                    status: 'confirmed',
+                  }, roomName, `¡Hola <strong>${res.guest_name}</strong>! Hemos recibido correctamente tu pago de garantía de <strong>${res.prepayment_amount} €</strong> y tu reserva ha quedado completamente confirmada. ¡Te esperamos!`);
+                  console.log(`📧 Correo de confirmación enviado a ${res.guest_email} vía webhook.`);
+                } catch (emailErr) {
+                  console.error('Error al enviar correo en el webhook:', emailErr);
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
       default:
         console.log('Unhandled Stripe event:', event.type);
     }
