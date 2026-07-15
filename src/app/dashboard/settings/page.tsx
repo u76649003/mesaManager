@@ -693,10 +693,11 @@ export default function SettingsPage() {
                                 <button
                                   type="button"
                                   onClick={handleConnectGoogle}
-                                  className="w-full py-3.5 bg-blue-650 hover:bg-blue-700 text-white font-black text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                                  className="w-full py-3.5 bg-[#4285F4] hover:bg-[#357AE8] text-white font-black text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
                                 >
                                   <span>📧</span> Conectar con Google
                                 </button>
+
                               </div>
                               
                               <details className="text-center group">

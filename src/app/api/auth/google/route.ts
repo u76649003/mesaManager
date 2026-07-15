@@ -8,13 +8,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Falta el ID del inquilino (tenant_id)' }, { status: 400 });
   }
   
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    return NextResponse.json({ error: 'Las credenciales de Google OAuth (GOOGLE_CLIENT_ID) no están configuradas en el servidor.' }, { status: 500 });
-  }
-
   const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/api/auth/google/callback`;
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId || clientId === 'dummy_key_for_build_time') {
+    return NextResponse.redirect(`${origin}/dashboard/settings?google_error=Las+credenciales+de+Google+OAuth+(GOOGLE_CLIENT_ID)+no+estan+configuradas+en+el+servidor`);
+  }
+
   
   // Scopes requested: Gmail send access and User profile email lookup
   const scopes = [
