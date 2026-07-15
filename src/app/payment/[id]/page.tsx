@@ -84,6 +84,21 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
         if (!tenError && ten) {
           setTenant(ten);
         }
+
+        // AUTO-REDIRECT FOR STRIPE:
+        // If the reservation is unpaid, requires prepayment online (Stripe), and we didn't just return from a session
+        if (res.payment_status !== 'paid' && res.payment_method === 'online' && successParam !== 'true') {
+          setIsProcessing(true);
+          const { createPrepaymentSession } = await import('@/app/actions/payments');
+          const result = await createPrepaymentSession(id, window.location.origin);
+          if (result.success && result.url) {
+            window.location.href = result.url; // Immediately send to Stripe
+            return; // keep loading screen active while redirecting
+          } else {
+            toast.error(result.error || 'Error al iniciar la pasarela de Stripe');
+            setIsProcessing(false);
+          }
+        }
       } catch (err) {
         console.error('Error loading payment details:', err);
       } finally {
@@ -94,7 +109,7 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
     if (id) {
       loadData();
     }
-  }, [id]);
+  }, [id, searchParams]);
 
   const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '');
@@ -180,12 +195,16 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
   };
 
 
-  if (isLoading) {
+  if (isLoading || isProcessing) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="text-center space-y-4 max-w-sm">
           <Loader2 className="w-12 h-12 text-blue-600 animate-spin mx-auto" />
-          <p className="text-slate-650 text-sm font-bold">Cargando detalles del pago seguro...</p>
+          <p className="text-slate-650 text-sm font-bold">
+            {reservation?.payment_method === 'online' && reservation.payment_status !== 'paid'
+              ? 'Redirigiendo de forma segura a la pasarela de Stripe...'
+              : 'Cargando detalles del pago seguro...'}
+          </p>
         </div>
       </div>
     );
