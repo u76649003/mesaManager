@@ -836,6 +836,29 @@ export default function SettingsPage() {
                         </h3>
                       </div>
                       
+                      <div className="bg-blue-50 border border-blue-200 p-4.5 rounded-2xl space-y-3.5">
+                        <h4 className="text-[10px] font-black text-blue-900 flex items-center gap-1.5 uppercase tracking-wider">
+                          <span>💡</span> Guía: Cómo activar tu pasarela de pagos Stripe
+                        </h4>
+                        <ol className="list-decimal list-inside text-[11px] text-blue-850 font-bold space-y-2">
+                          <li>
+                            Crea o inicia sesión en tu cuenta de <a href="https://stripe.com" target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-800">Stripe.com</a>.
+                          </li>
+                          <li>
+                            Ve a la sección **Desarrolladores &gt; Claves de API** en tu panel de Stripe.
+                          </li>
+                          <li>
+                            Copia la **Clave pública** (empieza por `pk_live_` o `pk_test_`) y la **Clave secreta** (empieza por `sk_live_` o `sk_test_`) y pégalas en los campos de abajo.
+                          </li>
+                          <li>
+                            Configura los Webhooks en Stripe para automatizar el estado (opcional): añade la URL `https://mesa-manager.vercel.app/api/webhooks/stripe` escuchando el evento `checkout.session.completed`.
+                          </li>
+                        </ol>
+                        <p className="text-[9.5px] text-blue-750 font-bold">
+                          *Una vez guardadas las claves de Stripe, la opción de &quot;Solicitar prepago online con tarjeta&quot; se habilitará automáticamente al crear o editar reservas en las salas de tu restaurante.
+                        </p>
+                      </div>
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
                           <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
@@ -863,10 +886,6 @@ export default function SettingsPage() {
                           />
                         </div>
                       </div>
-
-                      <p className="text-[10px] text-slate-450 font-bold leading-relaxed">
-                        ⚠️ Ingrese las claves de API correspondientes a su cuenta de Stripe para procesar los depósitos de garantía de reserva directamente a su cuenta bancaria.
-                      </p>
 
                       <div className="flex justify-end pt-4 border-t border-slate-100">
                         <button
