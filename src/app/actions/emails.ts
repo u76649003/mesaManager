@@ -61,18 +61,23 @@ async function sendMail({ to, subject, html, tenantId }: SendEmailParams) {
         } as any);
         fromAddress = tenant.smtp_from || `"${tenant.name || 'Restaurante'}" <${tenant.google_email}>`;
       } else if (tenant && tenant.smtp_host && tenant.smtp_user && tenant.smtp_pass) {
-        // Fallback to manual SMTP configuration
+        // Fallback to manual SMTP (App Password) configuration
         const port = Number(tenant.smtp_port) || 587;
+        console.log(`📧 Usando SMTP: host=${tenant.smtp_host} port=${port} user=${tenant.smtp_user}`);
         transporter = nodemailer.createTransport({
           host: tenant.smtp_host,
           port,
           secure: port === 465,
+          requireTLS: port === 587,
           auth: {
             user: tenant.smtp_user,
             pass: tenant.smtp_pass,
           },
+          tls: { rejectUnauthorized: false },
         });
         fromAddress = tenant.smtp_from || `"${tenant.name || 'Restaurante'}" <${tenant.smtp_user}>`;
+      } else {
+        console.warn(`⚠️ Tenant ${tenantId} no tiene SMTP configurado. Correo simulado.`);
       }
 
     } catch (e) {
@@ -94,6 +99,15 @@ async function sendMail({ to, subject, html, tenantId }: SendEmailParams) {
     return { success: true, simulated: true };
   }
 
+  // Verify the SMTP connection before trying to send
+  try {
+    await transporter.verify();
+  } catch (verifyError: any) {
+    const msg = verifyError?.message || 'Error de conexión SMTP';
+    console.error('❌ SMTP verify failed:', msg);
+    return { success: false, error: `Error de conexión con el servidor de correo: ${msg}. Comprueba que tu contraseña de aplicación de 16 letras es correcta y que tienes la verificación en 2 pasos activada en tu cuenta de Google.` };
+  }
+
   try {
     const info = await transporter.sendMail({
       from: fromAddress,
@@ -101,11 +115,12 @@ async function sendMail({ to, subject, html, tenantId }: SendEmailParams) {
       subject,
       html,
     });
-    console.log(`📧 Correo enviado: ${info.messageId}`);
+    console.log(`📧 Correo enviado correctamente: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('❌ Error al enviar correo:', error);
-    throw error;
+  } catch (error: any) {
+    const msg = error?.message || 'Error desconocido';
+    console.error('❌ Error al enviar correo:', msg);
+    return { success: false, error: `Error al enviar correo: ${msg}` };
   }
 }
 

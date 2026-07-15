@@ -401,11 +401,19 @@ export function ReservationModal() {
               ? window.location.origin
               : 'https://mesa-manager.vercel.app';
             const paymentUrl = `${origin}/payment/${updatedRes.id}`;
-            sendPaymentRequestEmail(updatedRes, paymentUrl, data.custom_message);
-            toast.success(`📧 Correo enviado a ${data.guest_email} solicitando pre-pago de ${data.prepayment_amount} €`);
+            const emailResult = await sendPaymentRequestEmail(updatedRes, paymentUrl, data.custom_message);
+            if (emailResult?.success === false) {
+              toast.error(`❌ ${emailResult.error}`);
+            } else {
+              toast.success(`📧 Correo enviado a ${data.guest_email} solicitando pre-pago de ${data.prepayment_amount} €`);
+            }
           } else {
-            sendReservationConfirmationEmail(updatedRes, roomName, data.custom_message);
-            toast.success(`📧 Correo enviado a ${data.guest_email} confirmando la reserva.`);
+            const emailResult = await sendReservationConfirmationEmail(updatedRes, roomName, data.custom_message);
+            if (emailResult?.success === false) {
+              toast.error(`❌ ${emailResult.error}`);
+            } else {
+              toast.success(`📧 Correo enviado a ${data.guest_email} confirmando la reserva.`);
+            }
           }
         }
       }
@@ -516,11 +524,19 @@ export function ReservationModal() {
             ? window.location.origin
             : 'https://mesa-manager.vercel.app';
           const paymentUrl = `${origin}/payment/${insertedData.id}`;
-          sendPaymentRequestEmail(insertedData, paymentUrl, data.custom_message);
-          toast.success(`📧 Correo enviado a ${data.guest_email} solicitando pre-pago de ${data.prepayment_amount} €`);
+          const emailResult = await sendPaymentRequestEmail(insertedData, paymentUrl, data.custom_message);
+          if (emailResult?.success === false) {
+            toast.error(`❌ ${emailResult.error}`);
+          } else {
+            toast.success(`📧 Correo enviado a ${data.guest_email} solicitando pre-pago de ${data.prepayment_amount} €`);
+          }
         } else {
-          sendReservationConfirmationEmail(insertedData, roomName, data.custom_message);
-          toast.success(`📧 Correo enviado a ${data.guest_email} confirmando la reserva.`);
+          const emailResult = await sendReservationConfirmationEmail(insertedData, roomName, data.custom_message);
+          if (emailResult?.success === false) {
+            toast.error(`❌ ${emailResult.error}`);
+          } else {
+            toast.success(`📧 Correo enviado a ${data.guest_email} confirmando la reserva.`);
+          }
         }
       }
 
