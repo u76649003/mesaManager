@@ -22,6 +22,8 @@ import type { Table, Room, TableGroup, Reservation, TableType } from '@/types';
 import { Plus, Grid, Layers, Circle, Square, Link2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { parseAndCreateRoomsFromImage } from '@/app/actions/layoutParser';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
 
 interface FloorCanvasProps {
   room: Room;
@@ -52,6 +54,9 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
     deleteRoom,
     fetchRooms,
   } = useFloorStore();
+
+  const isMobile = useIsMobile();
+
 
   const {
     reservations,
@@ -588,7 +593,8 @@ export function FloorCanvas({ room, onTableClick, onRoomChange }: FloorCanvasPro
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onContextMenu={(e) => e.preventDefault()}
-          style={{ minHeight: '500px', touchAction: 'none' }}
+          style={{ minHeight: isMobile ? '100%' : '500px', touchAction: 'none' }}
+
         >
           {/* Grid de fondo */}
           <svg

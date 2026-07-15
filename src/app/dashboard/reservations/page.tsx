@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { useReservationStore } from '@/stores/useReservationStore';
 import { useFloorStore } from '@/stores/useFloorStore';
@@ -65,6 +67,8 @@ export default function ReservationsCalendarPage() {
   const [allTables, setAllTables] = useState<Table[]>([]);
   const [allGroups, setAllGroups] = useState<TableGroup[]>([]);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const isMobile = useIsMobile();
+
 
   // Load rooms and reservations data on mount
   useEffect(() => {
@@ -280,7 +284,8 @@ export default function ReservationsCalendarPage() {
             </button>
           </div>
         </div>        {/* Botón para colapsar/desplegar filtros en móvil */}
-        <div className="flex lg:hidden items-center justify-between p-3 bg-slate-50 border-b-2 border-slate-200 w-full px-5">
+        <div className={cn("items-center justify-between p-3 bg-slate-50 border-b-2 border-slate-200 w-full px-5", isMobile ? "flex" : "hidden")}>
+
           <span className="text-[11px] font-black text-slate-800">
             🔍 {selectedRoomFilter === 'all' ? 'Todos los salones' : rooms.find(r => r.id === selectedRoomFilter)?.name || 'Salón'}
             {selectedTimeFilter !== 'all' ? ` · Hora: ${selectedTimeFilter}` : ''}
@@ -294,7 +299,8 @@ export default function ReservationsCalendarPage() {
         </div>
 
         {/* Panel de filtros (Siempre visible en PC, colapsable en Móvil) */}
-        <div className={cn("flex-col", showMobileFilters ? "flex" : "hidden lg:flex")}>
+        <div className={cn("flex-col", isMobile ? (showMobileFilters ? "flex" : "hidden") : "flex")}>
+
           {/* Filtro de Salones */}
           <div className="px-6 py-3 bg-white border-b-2 border-slate-200 flex flex-wrap items-center gap-3">
             <span className="text-slate-500 text-xs font-black uppercase tracking-wider">Filtrar por Salón:</span>

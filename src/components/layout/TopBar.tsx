@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import { useFloorStore } from '@/stores/useFloorStore';
 import { useReservationStore } from '@/stores/useReservationStore';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
 import type { Room, FloorMode } from '@/types';
 import {
   Edit3,
@@ -47,7 +49,9 @@ export function TopBar({
   occupiedTables,
   reservationsToday,
 }: TopBarProps) {
+  const isMobile = useIsMobile();
   // Use direct stores to fetch actions
+
   const { resetView, openRoomModal, fetchRooms } = useFloorStore();
   const { selectedDate, setSelectedDate, getActiveShift, shifts } = useReservationStore();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -292,7 +296,8 @@ export function TopBar({
           </div>
 
           {/* Date Selector (Mobile only) */}
-          <div className="flex lg:hidden items-center gap-1.5 bg-slate-100 border-2 border-slate-200 rounded-xl p-0.5 shadow-inner">
+          <div className={cn("items-center gap-1.5 bg-slate-100 border-2 border-slate-200 rounded-xl p-0.5 shadow-inner", isMobile ? "flex" : "hidden")}>
+
             <button
               onClick={goToPrevDay}
               className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-200 transition-colors cursor-pointer"
@@ -330,17 +335,20 @@ export function TopBar({
               className="w-2 h-2 rounded-full shrink-0"
               style={{ backgroundColor: activeShift.color }}
             />
-            <span className="text-[10px] lg:text-xs font-semibold text-slate-500 truncate max-w-[200px]">
+            <span className={cn("font-semibold text-slate-500 truncate max-w-[200px]", isMobile ? "text-[10px]" : "text-[10px] lg:text-xs")}>
+
               Turno {activeShift.name} · {activeShift.start_time}–{activeShift.end_time}
             </span>
           </div>
         )}
 
         {/* Separator (Desktop only) */}
-        <div className="hidden lg:block w-[1.5px] h-8 bg-slate-200" />
+        {!isMobile && <div className="hidden lg:block w-[1.5px] h-8 bg-slate-200" />}
+
 
         {/* Stats Grid on Mobile, Flex Row on Desktop */}
-        <div className="hidden lg:flex items-center gap-1.5 lg:gap-3 w-full lg:w-auto border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0">
+        <div className={cn("items-center gap-1.5 lg:gap-3 w-full lg:w-auto border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0", isMobile ? "hidden" : "flex")}>
+
           <Stat
             icon={<TableProperties size={14} />}
             value={`${occupiedTables}/${totalTables}`}
@@ -363,7 +371,8 @@ export function TopBar({
       </div>
 
       {/* Date selector (Desktop only) */}
-      <div className="hidden lg:flex items-center gap-3">
+      <div className={cn("items-center gap-3", isMobile ? "hidden" : "flex")}>
+
         <div className={cn(
           "flex items-center gap-2 bg-slate-100 border-2 border-slate-200 rounded-2xl p-1 shadow-inner transition-colors",
           isDateClosed(selectedDate) && "bg-red-50 border-red-200"
@@ -405,14 +414,16 @@ export function TopBar({
       </div>
 
       {/* Right section: Mode Switcher & Reset */}
-      <div className="flex items-center justify-between lg:justify-end gap-2 w-full lg:w-auto border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0">
+      <div className={cn("flex items-center gap-2 w-full border-t border-slate-100 pt-2.5", isMobile ? "justify-between" : "lg:justify-end lg:w-auto lg:border-t-0 lg:pt-0")}>
+
         <div className="flex items-center bg-slate-100 border-2 border-slate-200 rounded-2xl p-1 gap-1">
           {(['service', 'edit'] as const).map((m) => (
             <button
               key={m}
               onClick={() => onModeChange(m)}
               className={cn(
-                'flex items-center gap-1.5 px-3 lg:px-4.5 py-1.5 lg:py-2.5 rounded-xl text-xs font-extrabold transition-all border border-transparent cursor-pointer',
+                'flex items-center gap-1.5 py-1.5 rounded-xl text-xs font-extrabold transition-all border border-transparent cursor-pointer',
+                isMobile ? 'px-3' : 'px-3 lg:px-4.5 lg:py-2.5',
                 mode === m
                   ? m === 'edit'
                     ? 'bg-amber-100 text-amber-800 border-2 border-amber-300 shadow-sm'
@@ -421,7 +432,8 @@ export function TopBar({
               )}
             >
               {m === 'service' ? <Eye size={14} /> : <Edit3 size={14} />}
-              <span className="text-[10px] lg:text-xs">{m === 'service' ? 'Ver Mesas' : 'Editar Plano'}</span>
+              <span className={cn(isMobile ? "text-[10px]" : "text-[10px] lg:text-xs")}>{m === 'service' ? 'Ver Mesas' : 'Editar Plano'}</span>
+
             </button>
           ))}
         </div>
@@ -439,8 +451,12 @@ export function TopBar({
           <button
             onClick={resetView}
             title="Restablecer vista"
-            className="w-8 h-8 lg:w-9.5 lg:h-9.5 flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-700 hover:text-slate-950 hover:bg-slate-50 transition-colors text-xs lg:text-sm font-bold cursor-pointer"
+            className={cn(
+              "flex items-center justify-center rounded-xl bg-white border-2 border-slate-200 text-slate-700 hover:text-slate-950 hover:bg-slate-50 transition-colors font-bold cursor-pointer",
+              isMobile ? "w-8 h-8 text-xs" : "w-8 h-8 lg:w-9.5 lg:h-9.5 text-xs lg:text-sm"
+            )}
           >
+
             ⊡
           </button>
         </div>

@@ -3,6 +3,8 @@
 import { useEffect, useState, use } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
+import { sendReservationConfirmationEmail } from '@/app/actions/emails';
+
 import type { Reservation, Tenant } from '@/types';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -117,10 +119,17 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
           throw error;
         }
 
-        // Simulating the confirmation email sent message
+        // Send actual email receipt and confirmation
         if (reservation?.guest_email) {
+          const roomName = reservation.room?.name || 'Principal';
+          await sendReservationConfirmationEmail({
+            ...reservation,
+            payment_status: 'paid',
+            status: 'confirmed',
+          }, roomName);
           toast.success(`📧 Recibo de pago enviado a ${reservation.guest_email}`);
         }
+
 
         setIsSuccess(true);
       } catch (err) {

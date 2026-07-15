@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, Clock, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFloorStore } from '@/stores/useFloorStore';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
 import { useReservationStore } from '@/stores/useReservationStore';
 import { FloorCanvas } from '@/components/floor/FloorCanvas';
 import { TableDetailModal } from '@/components/floor/TableDetailModal';
@@ -44,6 +46,8 @@ export default function DashboardPage() {
   } = useReservationStore();
 
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
+  const isMobile = useIsMobile();
+
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeView, setActiveView] = useState<'map' | 'list'>('map');
@@ -161,6 +165,30 @@ export default function DashboardPage() {
       setSelectedTable(null);
     }
   }, [selectedTableId, tables, getDynamicTable]);
+
+  // --- Auto-transition tables from cleaning to available after 2 minutes ---
+  useEffect(() => {
+    const checkCleaningTables = async () => {
+      const now = new Date().getTime();
+      const cleaningTables = tables.filter((t) => t.status === 'cleaning');
+      
+      for (const table of cleaningTables) {
+        if (!table.updated_at) continue;
+        const updatedAtTime = new Date(table.updated_at).getTime();
+        const elapsedMs = now - updatedAtTime;
+        
+        if (elapsedMs >= 2 * 60 * 1000) { // 2 minutes
+          await useFloorStore.getState().setTableStatus(table.id, 'available');
+        }
+      }
+    };
+
+    checkCleaningTables();
+    const interval = setInterval(checkCleaningTables, 10000);
+    return () => clearInterval(interval);
+  }, [tables]);
+
+
 
   // --- Overdue detection: runs every 30 seconds ---
   useEffect(() => {
@@ -367,7 +395,8 @@ export default function DashboardPage() {
         />
 
         {/* Mobile View Toggle */}
-        <div className="flex lg:hidden p-3 bg-white border-b border-slate-200">
+        <div className={cn("p-3 bg-white border-b border-slate-200", isMobile ? "flex" : "hidden")}>
+
           <div className="flex w-full rounded-2xl bg-slate-100 p-1 border border-slate-200 shadow-inner">
             <button
               onClick={() => setActiveView('map')}
@@ -397,7 +426,8 @@ export default function DashboardPage() {
         {/* Vista dividida: Lista izquierda + Canvas derecho */}
         <div className="dashboard-split flex-1 overflow-hidden">
           {/* Columna 1: Lista de Reservas (Izquierda en PC, pestaña en Móvil) */}
-          <div className={cn("h-full flex-col overflow-hidden", activeView === 'list' ? "flex" : "hidden lg:flex")}>
+          <div className={cn("h-full flex-col overflow-hidden", isMobile ? (activeView === 'list' ? "flex" : "hidden") : "flex")}>
+
             <ReservationList
               onReservationClick={(res) => {
                 if (res.table_id) {
@@ -413,11 +443,13 @@ export default function DashboardPage() {
           </div>
 
           {/* Columna 2: Plano de Sala y Mandos (Derecha en PC, pestaña en Móvil) */}
-          <div className={cn("flex-col p-1.5 md:p-3 gap-2 md:gap-3 overflow-hidden flex-1", activeView === 'map' ? "flex" : "hidden lg:flex")}>
+          <div className={cn("flex-col p-1.5 md:p-3 gap-2 md:gap-3 overflow-hidden flex-1", isMobile ? (activeView === 'map' ? "flex" : "hidden") : "flex")}>
+
             {/* Cabecera del plano con Leyenda y Selector de Horas (Timeline) */}
             <div className="flex flex-col gap-1.5 md:gap-3 bg-white border-2 border-slate-200 p-2 md:p-3.5 rounded-3xl shadow-sm">
               {/* Botón para colapsar/desplegar controles de horas en móvil */}
-              <div className="flex items-center justify-between lg:hidden w-full px-1 py-0.5">
+              <div className={cn("items-center justify-between w-full px-1 py-0.5", isMobile ? "flex" : "hidden")}>
+
                 <span className="text-[11px] font-black text-slate-800">
                   {selectedTime === null ? '⏰ Tiempo Real' : `⏰ Reservas: ${selectedTime}`}
                 </span>
@@ -430,9 +462,10 @@ export default function DashboardPage() {
               </div>
 
               {/* Controles de turnos y horas (visibles siempre en desktop, y en móvil solo si está desplegado) */}
-              <div className={cn("flex flex-col gap-2 md:gap-3", showMobileTimeline ? "flex" : "hidden lg:flex")}>
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-1.5 md:gap-3 border-b border-slate-200 pb-1.5 md:pb-2">
-                  <div className="hidden lg:block">
+              <div className={cn("flex flex-col gap-2 md:gap-3", isMobile ? (showMobileTimeline ? "flex" : "hidden") : "flex")}>
+                <div className={cn("flex justify-between gap-1.5 md:gap-3 border-b border-slate-200 pb-1.5 md:pb-2", isMobile ? "flex-col" : "flex-row items-center")}>
+                  <div className={isMobile ? "hidden" : "block"}>
+
                     <StatusLegend />
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 md:gap-3 justify-between md:justify-start">
@@ -484,7 +517,8 @@ export default function DashboardPage() {
                       </button>
                     </div>
 
-                    <div className="hidden lg:block h-6 w-px bg-slate-250" />
+                    {!isMobile && <div className="hidden lg:block h-6 w-px bg-slate-250" />}
+
 
                     <div className="flex items-center gap-1.5">
                       <span className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-wider hidden sm:inline">Visualizar hora:</span>
@@ -516,7 +550,8 @@ export default function DashboardPage() {
                     return Object.entries(groups).map(([shiftName, shiftSlots]) => (
                       <div key={shiftName} className="flex flex-col gap-0.5">
                         {selectedShiftId === null && (
-                          <span className="text-[8px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider pl-1.5 hidden lg:block">
+                          <span className={cn("text-[8px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider pl-1.5", isMobile ? "hidden" : "block")}>
+
                             Turno {shiftName}
                           </span>
                         )}

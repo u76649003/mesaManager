@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { useFloorStore } from '@/stores/useFloorStore';
 import { useReservationStore } from '@/stores/useReservationStore';
@@ -24,7 +26,9 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 export default function SettingsPage() {
+  const isMobile = useIsMobile();
   // Stores
+
   const {
     rooms,
     tableTypes,
@@ -389,9 +393,10 @@ export default function SettingsPage() {
         </div>
 
         {/* Tab Selector & Content Split */}
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        <div className={cn("flex-1 flex overflow-hidden", isMobile ? "flex-col" : "flex-row")}>
           {/* Mobile Horizontal Tabs Selector */}
-          <div className="flex lg:hidden overflow-x-auto gap-2 p-3 bg-white border-b-2 border-slate-200 shrink-0 scrollbar-none">
+          <div className={cn("overflow-x-auto gap-2 p-3 bg-white border-b-2 border-slate-200 shrink-0 scrollbar-none", isMobile ? "flex" : "hidden")}>
+
             {[
               { id: 'general', label: 'General', icon: Building2 },
               { id: 'rooms', label: 'Salas', icon: Layout },
@@ -427,7 +432,8 @@ export default function SettingsPage() {
           </div>
 
           {/* Desktop Left Tabs Sidebar */}
-          <div className="hidden lg:flex flex-col w-64 border-r-2 border-slate-200 p-4 space-y-2 bg-white shrink-0">
+          <div className={cn("flex-col w-64 border-r-2 border-slate-200 p-4 space-y-2 bg-white shrink-0", isMobile ? "hidden" : "flex")}>
+
             {[
               { id: 'general', label: 'General', icon: Building2 },
               { id: 'rooms', label: 'Salas y Espacios', icon: Layout },

@@ -3,6 +3,8 @@
 import { motion } from 'framer-motion';
 import { useFloorStore } from '@/stores/useFloorStore';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
 import type { Room } from '@/types';
 import {
   LayoutDashboard,
@@ -34,6 +36,8 @@ const NAV_ITEMS = [
 
 export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
   const pathname = usePathname();
+  const isMobile = useIsMobile();
+
 
   const getActiveId = () => {
     if (pathname === '/') return 'floor';
@@ -49,7 +53,8 @@ export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
   return (
     <>
       {/* Desktop Sidebar (hidden on mobile) */}
-      <aside className="sidebar hidden lg:flex flex-col justify-between h-screen border-r-2 border-slate-200 bg-white p-6 w-[240px] shrink-0 z-40">
+      <aside className={cn("sidebar flex-col justify-between h-screen border-r-2 border-slate-200 bg-white p-6 w-[240px] shrink-0 z-40", isMobile ? "hidden" : "flex")}>
+
         {/* Brand Header */}
         <div className="flex items-center gap-3 mb-6">
           <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 border border-blue-550 shrink-0">
@@ -147,7 +152,8 @@ export function Sidebar({ activeRoom, rooms, onRoomChange }: SidebarProps) {
       </aside>
 
       {/* Mobile Bottom Navigation (hidden on desktop) */}
-      <div className="fixed bottom-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-lg border-t border-slate-200 z-[9999] flex items-center justify-around lg:hidden px-2 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.06)] text-slate-800">
+      <div className={cn("fixed bottom-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-lg border-t border-slate-200 z-[9999] items-center justify-around px-2 pb-safe shadow-[0_-4px_20px_rgba(0,0,0,0.06)] text-slate-800", isMobile ? "flex" : "hidden")}>
+
         {NAV_ITEMS.map(({ icon: Icon, label, id, href }) => {
           const isActive = activeNav === id;
           return (

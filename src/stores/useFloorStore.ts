@@ -457,8 +457,9 @@ export const useFloorStore = create<FloorState>()(
         },
 
         setTableStatus: async (tableId, status) => {
+          const nowISO = new Date().toISOString();
           set((state) => ({
-            tables: state.tables.map((t) => (t.id === tableId ? { ...t, status } : t)),
+            tables: state.tables.map((t) => (t.id === tableId ? { ...t, status, updated_at: nowISO } : t)),
           }));
 
           const supabase = createClient();

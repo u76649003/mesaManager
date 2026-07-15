@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { TableGroup, Waiter } from '@/types';
 import { createClient } from '@/lib/supabase/client';
+import { sendReservationConfirmationEmail, sendPaymentRequestEmail } from '@/app/actions/emails';
+
 
 interface FormValues {
   guest_name:       string;
@@ -30,7 +32,9 @@ interface FormValues {
   payment_method:   'online' | 'bizum';
   bizum_phone:      string;
   bizum_name:       string;
+  custom_message:   string;
 }
+
 
 export function ReservationModal() {
   const {
@@ -103,7 +107,9 @@ export function ReservationModal() {
       payment_method:   'online',
       bizum_phone:      '600000000',
       bizum_name:       'La Terrazza Restaurant',
+      custom_message:   '',
     },
+
   });
 
   const partySize = watch('party_size') || 2;
@@ -138,6 +144,8 @@ export function ReservationModal() {
   // Initialize form and local selected tables
   useEffect(() => {
     let initialTables: string[] = [];
+    setIsMessageManuallyEdited(false);
+
 
     if (editingReservation) {
       reset({
@@ -158,7 +166,9 @@ export function ReservationModal() {
         payment_method:   editingReservation.payment_method ?? 'online',
         bizum_phone:      editingReservation.bizum_phone ?? '600000000',
         bizum_name:       editingReservation.bizum_name ?? 'La Terrazza Restaurant',
+        custom_message:   '',
       });
+
 
       // Load existing table IDs
       if (editingReservation.group_id) {
@@ -193,7 +203,9 @@ export function ReservationModal() {
         payment_method:   'online',
         bizum_phone:      '600000000',
         bizum_name:       'La Terrazza Restaurant',
+        custom_message:   '',
       });
+
 
       // Load prefilled tables from store
       if (prefillTableIds && prefillTableIds.length > 0) {
@@ -222,11 +234,52 @@ export function ReservationModal() {
 
   }, [editingReservation, prefillTableIds, isModalOpen, reset, selectedDate, tables, rooms, tableGroups]);
 
+  const [isMessageManuallyEdited, setIsMessageManuallyEdited] = useState(false);
+
   // Set the correct shift when duration or time changes
   const watchDate = watch('date');
   const watchIsPrepayment = watch('is_prepayment');
   const watchPrefillEmail = watch('guest_email');
   const watchPaymentMethod = watch('payment_method');
+  const watchSendEmail = watch('send_email');
+  const watchGuestName = watch('guest_name') || '';
+  const watchPartySize = watch('party_size') || 2;
+  const watchPrepaymentAmount = watch('prepayment_amount') || 20;
+
+  // Track if we need to auto-generate the custom message
+  useEffect(() => {
+    if (isMessageManuallyEdited) return;
+
+    const formattedDate = watchDate ? watchDate : '';
+    const formattedTime = watchTime ? watchTime.slice(0, 5) : '';
+
+    let defaultMsg = '';
+    if (watchIsPrepayment) {
+      if (watchPaymentMethod === 'bizum') {
+        defaultMsg = `Hola ${watchGuestName}, para confirmar tu reserva de ${watchPartySize} personas el ${formattedDate} a las ${formattedTime}, por favor realiza un Bizum de ${watchPrepaymentAmount} € al teléfono ${watch('bizum_phone') || ''} (Beneficiario: ${watch('bizum_name') || ''}).`;
+      } else {
+        defaultMsg = `Hola ${watchGuestName}, para confirmar tu reserva de ${watchPartySize} personas el ${formattedDate} a las ${formattedTime}, por favor realiza el pago de garantía de ${watchPrepaymentAmount} € en la pasarela de pago seguro.`;
+      }
+    } else if (watchSendEmail) {
+      defaultMsg = `Hola ${watchGuestName}, tu reserva para el ${formattedDate} a las ${formattedTime} para ${watchPartySize} personas ha sido confirmada con éxito. ¡Te esperamos!`;
+    }
+
+    setValue('custom_message', defaultMsg);
+  }, [
+    watchIsPrepayment,
+    watchSendEmail,
+    watchGuestName,
+    watchDate,
+    watchTime,
+    watchPartySize,
+    watchPrepaymentAmount,
+    watchPaymentMethod,
+    watch('bizum_phone'),
+    watch('bizum_name'),
+    isMessageManuallyEdited,
+    setValue
+  ]);
+
 
   useEffect(() => {
     if (!watchTime || !shifts || shifts.length === 0) return;
@@ -337,7 +390,29 @@ export function ReservationModal() {
         bizum_phone:      data.bizum_phone,
         bizum_name:       data.bizum_name,
       });
+
+      // Send actual email if requested
+      if (data.send_email && data.guest_email) {
+        const updatedRes = useReservationStore.getState().reservations.find(r => r.id === editingReservation.id);
+        if (updatedRes) {
+          const roomName = rooms.find(r => r.id === updatedRes.room_id)?.name || 'Principal';
+          if (updatedRes.is_prepayment && updatedRes.payment_status === 'pending') {
+            const origin = (typeof window !== 'undefined' && !window.location.origin.includes('localhost') && !window.location.origin.includes('capacitor'))
+              ? window.location.origin
+              : 'https://mesa-manager.vercel.app';
+            const paymentUrl = `${origin}/payment/${updatedRes.id}`;
+            sendPaymentRequestEmail(updatedRes, paymentUrl, data.custom_message);
+            toast.success(`📧 Correo enviado a ${data.guest_email} solicitando pre-pago de ${data.prepayment_amount} €`);
+          } else {
+            sendReservationConfirmationEmail(updatedRes, roomName, data.custom_message);
+            toast.success(`📧 Correo enviado a ${data.guest_email} confirmando la reserva.`);
+          }
+        }
+      }
+
+
       handleClose();
+
     } else {
       const prepaymentRequired = data.is_prepayment;
       
@@ -433,14 +508,23 @@ export function ReservationModal() {
         reservations: [insertedData, ...state.reservations]
       }));
 
-      // Trigger visual email simulation
+      // Trigger actual email sending
       if (data.send_email && data.guest_email) {
+        const roomName = rooms.find(r => r.id === insertedData.room_id)?.name || 'Principal';
         if (prepaymentRequired) {
+          const origin = (typeof window !== 'undefined' && !window.location.origin.includes('localhost') && !window.location.origin.includes('capacitor'))
+            ? window.location.origin
+            : 'https://mesa-manager.vercel.app';
+          const paymentUrl = `${origin}/payment/${insertedData.id}`;
+          sendPaymentRequestEmail(insertedData, paymentUrl, data.custom_message);
           toast.success(`📧 Correo enviado a ${data.guest_email} solicitando pre-pago de ${data.prepayment_amount} €`);
         } else {
+          sendReservationConfirmationEmail(insertedData, roomName, data.custom_message);
           toast.success(`📧 Correo enviado a ${data.guest_email} confirmando la reserva.`);
         }
       }
+
+
 
       if (prepaymentRequired) {
         setCreatedPrepaymentRes(insertedData);
@@ -1049,6 +1133,42 @@ export function ReservationModal() {
                       <span>💳 Solicitar pago por adelantado (Pre-pago)</span>
                     </label>
                   </div>
+
+                  {(watchSendEmail || watchIsPrepayment) && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="border-t border-dashed border-slate-200 pt-3.5 space-y-1.5"
+                    >
+                      <Field label="Personalizar mensaje del correo" icon={<Mail size={14} />}>
+                        <textarea
+                          {...register('custom_message')}
+                          onChange={(e) => {
+                            register('custom_message').onChange(e);
+                            setIsMessageManuallyEdited(true);
+                          }}
+                          placeholder="Escribe el mensaje personalizado..."
+                          rows={3}
+                          className={cn(inputCls(false), 'resize-none font-bold text-xs')}
+                        />
+                      </Field>
+                      <div className="flex justify-between items-center px-1">
+                        <span className="text-[10px] text-slate-450 font-bold">
+                          {isMessageManuallyEdited ? '✍️ Modificado manualmente' : '🤖 Generado automáticamente'}
+                        </span>
+                        {isMessageManuallyEdited && (
+                          <button
+                            type="button"
+                            onClick={() => setIsMessageManuallyEdited(false)}
+                            className="text-[10px] text-blue-600 hover:text-blue-800 font-black cursor-pointer bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200"
+                          >
+                            Restablecer plantilla
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+
 
                   {watchIsPrepayment && (
                     <motion.div

@@ -203,3 +203,35 @@ body {
     height: 100%;
   }
 }
+
+/* Force mobile layout when body has .force-mobile */
+body.force-mobile {
+  overflow: hidden !important;
+  height: 100dvh !important;
+}
+
+body.force-mobile .app-shell {
+  grid-template-columns: 1fr !important;
+  height: 100dvh !important;
+  overflow: hidden !important;
+}
+
+body.force-mobile .sidebar {
+  display: none !important;
+}
+
+body.force-mobile .main-content {
+  padding: 8px !important;
+  padding-bottom: 76px !important;
+  overflow: hidden !important;
+  height: 100dvh !important;
+}
+
+body.force-mobile .dashboard-split {
+  grid-template-columns: 1fr !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  overflow: hidden !important;
+  gap: 8px !important;
+  height: 100% !important;
+}
+

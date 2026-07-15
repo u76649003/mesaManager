@@ -202,7 +202,7 @@ export function RoomModal({ onRoomChange }: RoomModalProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeRoomModal}
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100]"
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[10000]"
           />
 
           {/* Modal content */}
@@ -211,7 +211,7 @@ export function RoomModal({ onRoomChange }: RoomModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', duration: 0.4 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto"
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-4 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden my-8">
