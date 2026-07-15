@@ -3,17 +3,11 @@
 import Stripe from 'stripe';
 import { createClient } from '@/lib/supabase/server';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'dummy_key_for_build_time');
-
 /**
  * Crea una sesión de Stripe Checkout para el prepago de una reserva
  */
 export async function createPrepaymentSession(reservationId: string, origin: string) {
   try {
-    if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY === 'dummy_key_for_build_time') {
-      throw new Error('La clave secreta de Stripe (STRIPE_SECRET_KEY) no está configurada en las variables de entorno.');
-    }
-
     const supabase = await createClient();
     
     // Fetch reservation
@@ -27,12 +21,20 @@ export async function createPrepaymentSession(reservationId: string, origin: str
       throw new Error('No se pudo encontrar la reserva en la base de datos.');
     }
 
+    // Use tenant-specific stripe key OR global fallback
+    const stripeSecretKey = res.tenant?.stripe_secret_key || process.env.STRIPE_SECRET_KEY;
+
+    if (!stripeSecretKey || stripeSecretKey === 'dummy_key_for_build_time') {
+      throw new Error('La pasarela de pago (Stripe) no está configurada para este restaurante.');
+    }
+
+    const stripeInstance = new Stripe(stripeSecretKey);
     const amountInCents = Math.round(Number(res.prepayment_amount) * 100);
     if (amountInCents <= 0) {
       throw new Error('El importe del prepago debe ser mayor que 0 €.');
     }
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await stripeInstance.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
@@ -65,11 +67,27 @@ export async function createPrepaymentSession(reservationId: string, origin: str
  */
 export async function verifyPrepaymentSession(reservationId: string, sessionId: string) {
   try {
-    if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY === 'dummy_key_for_build_time') {
-      throw new Error('La clave secreta de Stripe (STRIPE_SECRET_KEY) no está configurada.');
+    const supabase = await createClient();
+
+    // Fetch reservation to obtain tenant key
+    const { data: res, error: resError } = await supabase
+      .from('reservations')
+      .select('*, tenant:tenants(*)')
+      .eq('id', reservationId)
+      .single();
+
+    if (resError || !res) {
+      throw new Error('No se pudo encontrar la reserva.');
     }
 
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const stripeSecretKey = res.tenant?.stripe_secret_key || process.env.STRIPE_SECRET_KEY;
+
+    if (!stripeSecretKey || stripeSecretKey === 'dummy_key_for_build_time') {
+      throw new Error('La pasarela de pago (Stripe) no está configurada.');
+    }
+
+    const stripeInstance = new Stripe(stripeSecretKey);
+    const session = await stripeInstance.checkout.sessions.retrieve(sessionId);
     
     if (session.payment_status !== 'paid') {
       return { success: false, error: 'El pago aún no ha sido completado por la entidad bancaria.' };
@@ -78,8 +96,6 @@ export async function verifyPrepaymentSession(reservationId: string, sessionId: 
     if (session.metadata?.reservationId !== reservationId) {
       return { success: false, error: 'Los datos de la sesión de pago no coinciden con esta reserva.' };
     }
-
-    const supabase = await createClient();
     
     // Update reservation status and payment status in Supabase
     const { error } = await supabase
@@ -102,3 +118,4 @@ export async function verifyPrepaymentSession(reservationId: string, sessionId: 
     return { success: false, error: error.message || String(error) };
   }
 }
+

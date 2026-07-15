@@ -1,6 +1,7 @@
 'use server';
 
 import nodemailer from 'nodemailer';
+import { createClient } from '@/lib/supabase/server';
 import type { Reservation } from '@/types';
 
 // Helper to check if SMTP settings are present
@@ -26,23 +27,54 @@ function getTransporter() {
   });
 }
 
-const fromAddress = process.env.SMTP_FROM || '"MesaManager" <no-reply@mesamanager.com>';
-
 interface SendEmailParams {
   to: string;
   subject: string;
   html: string;
+  tenantId?: string;
 }
 
-async function sendMail({ to, subject, html }: SendEmailParams) {
-  const transporter = getTransporter();
-  
+async function sendMail({ to, subject, html, tenantId }: SendEmailParams) {
+  let transporter: nodemailer.Transporter | null = null;
+  let fromAddress = process.env.SMTP_FROM || '"MesaManager" <no-reply@mesamanager.com>';
+
+  if (tenantId) {
+    try {
+      const supabase = await createClient();
+      const { data: tenant } = await supabase
+        .from('tenants')
+        .select('name, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from')
+        .eq('id', tenantId)
+        .single();
+
+      if (tenant && tenant.smtp_host && tenant.smtp_user && tenant.smtp_pass) {
+        const port = Number(tenant.smtp_port) || 587;
+        transporter = nodemailer.createTransport({
+          host: tenant.smtp_host,
+          port,
+          secure: port === 465,
+          auth: {
+            user: tenant.smtp_user,
+            pass: tenant.smtp_pass,
+          },
+        });
+        fromAddress = tenant.smtp_from || `"${tenant.name || 'Restaurante'}" <${tenant.smtp_user}>`;
+      }
+    } catch (e) {
+      console.error('Error fetching tenant SMTP settings:', e);
+    }
+  }
+
+  if (!transporter) {
+    transporter = getTransporter();
+  }
+
   if (!transporter) {
     console.log('====== SIMULACIÓN DE ENVÍO DE CORREO ======');
     console.log(`Para: ${to}`);
     console.log(`Asunto: ${subject}`);
-    console.log('Contenido HTML:');
-    console.log(html);
+    console.log('Contenido HTML (texto plano):');
+    console.log(html.replace(/<[^>]*>/g, ' ').substring(0, 300) + '...');
     console.log('==========================================');
     return { success: true, simulated: true };
   }
@@ -58,7 +90,7 @@ async function sendMail({ to, subject, html }: SendEmailParams) {
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('❌ Error al enviar correo:', error);
-    return { success: false, error: String(error) };
+    throw error;
   }
 }
 

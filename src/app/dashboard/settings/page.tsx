@@ -131,6 +131,15 @@ export default function SettingsPage() {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [gracePeriod, setGracePeriod] = useState<number>(10);
   const [tenantId, setTenantId] = useState<string>('');
+  
+  // Custom SMTP and Stripe tenant states
+  const [smtpHost, setSmtpHost] = useState('');
+  const [smtpPort, setSmtpPort] = useState<number>(587);
+  const [smtpUser, setSmtpUser] = useState('');
+  const [smtpPass, setSmtpPass] = useState('');
+  const [smtpFrom, setSmtpFrom] = useState('');
+  const [stripeSecretKey, setStripeSecretKey] = useState('');
+  const [stripePublishableKey, setStripePublishableKey] = useState('');
 
   useEffect(() => {
     if (rooms && rooms.length > 0 && (!activeRoom || activeRoom.id === 'temp')) {
@@ -147,9 +156,20 @@ export default function SettingsPage() {
       const { data: profile } = await supabase.from('user_profiles').select('tenant_id').eq('id', user.id).single();
       if (profile) {
         setTenantId(profile.tenant_id);
-        const { data: tenant } = await supabase.from('tenants').select('grace_period_minutes').eq('id', profile.tenant_id).single();
+        const { data: tenant } = await supabase
+          .from('tenants')
+          .select('grace_period_minutes, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, stripe_secret_key, stripe_publishable_key')
+          .eq('id', profile.tenant_id)
+          .single();
         if (tenant) {
           setGracePeriod(tenant.grace_period_minutes || 10);
+          setSmtpHost(tenant.smtp_host || '');
+          setSmtpPort(tenant.smtp_port || 587);
+          setSmtpUser(tenant.smtp_user || '');
+          setSmtpPass(tenant.smtp_pass || '');
+          setSmtpFrom(tenant.smtp_from || '');
+          setStripeSecretKey(tenant.stripe_secret_key || '');
+          setStripePublishableKey(tenant.stripe_publishable_key || '');
         }
       }
     }
@@ -160,8 +180,25 @@ export default function SettingsPage() {
     if (!tenantId) return;
     const { createClient } = await import('@/lib/supabase/client');
     const supabase = createClient();
-    await supabase.from('tenants').update({ grace_period_minutes: gracePeriod }).eq('id', tenantId);
-    toast.success('Ajustes guardados correctamente');
+    const { error } = await supabase
+      .from('tenants')
+      .update({
+        grace_period_minutes: gracePeriod,
+        smtp_host: smtpHost || null,
+        smtp_port: smtpPort || 587,
+        smtp_user: smtpUser || null,
+        smtp_pass: smtpPass || null,
+        smtp_from: smtpFrom || null,
+        stripe_secret_key: stripeSecretKey || null,
+        stripe_publishable_key: stripePublishableKey || null,
+      })
+      .eq('id', tenantId);
+
+    if (error) {
+      toast.error('Error al guardar los ajustes: ' + error.message);
+    } else {
+      toast.success('Ajustes guardados correctamente');
+    }
   };
 
   const handleRoomImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -490,30 +527,171 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 max-w-xl shadow-md">
-                    <div>
-                      <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-2">
-                        Tiempo de cortesía para reservas (minutos)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={gracePeriod}
-                        onChange={(e) => setGracePeriod(parseInt(e.target.value) || 0)}
-                        className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none font-bold text-slate-900"
-                      />
-                      <p className="text-xs text-slate-500 mt-2">
-                        Tiempo de espera máximo antes de que una mesa reservada se libere.
-                      </p>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl">
+                    {/* General Settings Card */}
+                    <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 shadow-md flex flex-col justify-between">
+                      <div className="space-y-4">
+                        <div className="border-b border-slate-100 pb-3">
+                          <h3 className="font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                            <span>⚙️</span> Ajustes Operativos
+                          </h3>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">
+                            Tiempo de cortesía para reservas (minutos)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={gracePeriod}
+                            onChange={(e) => setGracePeriod(parseInt(e.target.value) || 0)}
+                            className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none font-bold text-slate-900 text-sm"
+                          />
+                          <p className="text-[10px] text-slate-450 mt-2 font-bold">
+                            Tiempo de espera máximo antes de que una mesa reservada se libere automáticamente.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex justify-end pt-4 border-t border-slate-100 mt-6">
+                        <button
+                          onClick={saveGeneralSettings}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
+                        >
+                          Guardar Ajustes
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="flex justify-end pt-4 border-t border-slate-100">
-                      <button
-                        onClick={saveGeneralSettings}
-                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors shadow-sm"
-                      >
-                        Guardar Ajustes
-                      </button>
+                    {/* SMTP Settings Card */}
+                    <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 shadow-md">
+                      <div className="border-b border-slate-100 pb-3">
+                        <h3 className="font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                          <span>📧</span> Servidor de Correo (SMTP)
+                        </h3>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2 space-y-1">
+                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                            Servidor Host
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="smtp.gmail.com"
+                            value={smtpHost}
+                            onChange={(e) => setSmtpHost(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                            Puerto
+                          </label>
+                          <input
+                            type="number"
+                            placeholder="587"
+                            value={smtpPort}
+                            onChange={(e) => setSmtpPort(parseInt(e.target.value) || 587)}
+                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                          Usuario / Correo
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="mi-restaurante@gmail.com"
+                          value={smtpUser}
+                          onChange={(e) => setSmtpUser(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                          Contraseña de Correo
+                        </label>
+                        <input
+                          type="password"
+                          placeholder="••••••••••••••••"
+                          value={smtpPass}
+                          onChange={(e) => setSmtpPass(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                          Remitente (Email From)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder='"MesaManager" <mi-restaurante@gmail.com>'
+                          value={smtpFrom}
+                          onChange={(e) => setSmtpFrom(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                        />
+                      </div>
+                      <div className="flex justify-end pt-4 border-t border-slate-100">
+                        <button
+                          onClick={saveGeneralSettings}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
+                        >
+                          Guardar SMTP
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Stripe Settings Card */}
+                    <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 shadow-md lg:col-span-2">
+                      <div className="border-b border-slate-100 pb-3">
+                        <h3 className="font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                          <span>💳</span> Pasarela de Pagos (Stripe de Cliente)
+                        </h3>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                            Clave Pública (Publishable Key)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="pk_live_..."
+                            value={stripePublishableKey}
+                            onChange={(e) => setStripePublishableKey(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                            Clave Secreta (Secret Key)
+                          </label>
+                          <input
+                            type="password"
+                            placeholder="sk_live_..."
+                            value={stripeSecretKey}
+                            onChange={(e) => setStripeSecretKey(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] text-slate-450 font-bold leading-relaxed">
+                        ⚠️ Ingrese las claves de API correspondientes a su cuenta de Stripe para procesar los depósitos de garantía de reserva directamente a su cuenta bancaria.
+                      </p>
+
+                      <div className="flex justify-end pt-4 border-t border-slate-100">
+                        <button
+                          onClick={saveGeneralSettings}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
+                        >
+                          Guardar Stripe
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
