@@ -783,13 +783,44 @@ export default function SettingsPage() {
                             />
                           </div>
 
-                          <div className="flex justify-end pt-4 border-t border-slate-100">
-                            <button
-                              onClick={saveGeneralSettings}
-                              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
-                            >
-                              Conectar Correo
-                            </button>
+                          <div className="pt-4 border-t border-slate-100 space-y-3">
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={async () => {
+                                  if (!tenantId) return;
+                                  toast.loading('Enviando correo de prueba...', { id: 'test-email' });
+                                  try {
+                                    const res = await fetch('/api/test-email', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ tenantId }),
+                                    });
+                                    const result = await res.json();
+                                    toast.dismiss('test-email');
+                                    if (result.success) {
+                                      toast.success(result.message, { duration: 8000 });
+                                    } else {
+                                      toast.error(result.error, { duration: 12000 });
+                                    }
+                                  } catch (e: any) {
+                                    toast.dismiss('test-email');
+                                    toast.error('Error al conectar con el servidor: ' + e.message);
+                                  }
+                                }}
+                                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
+                              >
+                                🧪 Probar Correo
+                              </button>
+                              <button
+                                onClick={saveGeneralSettings}
+                                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
+                              >
+                                💾 Guardar Ajustes
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-slate-400 text-right">
+                              Primero guarda los ajustes y luego pulsa &quot;Probar Correo&quot; para verificar que funciona
+                            </p>
                           </div>
                         </div>
                       )}
