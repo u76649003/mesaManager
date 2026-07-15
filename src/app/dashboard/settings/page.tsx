@@ -666,94 +666,54 @@ export default function SettingsPage() {
 
                       {emailProvider === 'gmail' ? (
                         <div className="space-y-4">
-                          {googleEmail ? (
-                            <div className="bg-emerald-50 border border-emerald-200 p-5 rounded-2xl flex flex-col items-center justify-center text-center space-y-3 shadow-inner">
-                              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center text-xl shadow-md">
-                                📧
-                              </div>
-                              <div>
-                                <span className="text-slate-900 font-extrabold text-xs block uppercase tracking-wider text-emerald-800">Gmail Enlazado</span>
-                                <span className="text-slate-500 text-xs mt-1 block font-bold font-mono bg-white px-3 py-1 rounded-lg border border-slate-200">{googleEmail}</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={handleDisconnectGoogle}
-                                className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-black text-[10px] rounded-xl border border-rose-200 transition-colors cursor-pointer mt-2"
-                              >
-                                Desconectar Cuenta
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl text-center space-y-3">
-                                <div className="text-xl">🔵</div>
-                                <div className="text-[10px] text-blue-900 font-extrabold leading-relaxed">
-                                  Sincroniza tu cuenta de Gmail con un solo clic. Los correos de confirmación se enviarán automáticamente desde tu dirección de Gmail.
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={handleConnectGoogle}
-                                  className="w-full py-3.5 bg-[#4285F4] hover:bg-[#357AE8] text-white font-black text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                                >
-                                  <span>📧</span> Conectar con Google
-                                </button>
+                          <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl space-y-2">
+                            <h4 className="text-[10px] font-black text-blue-900 flex items-center gap-1.5">
+                              <span>💡</span> ¿Cómo obtener tu contraseña de aplicación de Gmail?
+                            </h4>
+                            <ol className="text-[9px] text-blue-800 font-bold list-decimal list-inside space-y-1 leading-relaxed">
+                              <li>Ve a la pestaña de <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer" className="underline font-black text-blue-900 hover:text-blue-950">Seguridad de tu Cuenta de Google</a>.</li>
+                              <li>Activa la <strong>Verificación en 2 pasos</strong>.</li>
+                              <li>Busca <strong>"Contraseñas de aplicación"</strong> en la barra de búsqueda superior.</li>
+                              <li>Crea una nueva contraseña llamada <strong>"MesaManager"</strong>.</li>
+                              <li>Copia el código de <strong>16 letras</strong> que te dé Google y pégalo abajo.</li>
+                            </ol>
+                          </div>
 
-                              </div>
-                              
-                              <details className="text-center group">
-                                <summary className="text-[10px] text-slate-450 font-black cursor-pointer hover:underline list-none">
-                                  O usar método manual con contraseña de aplicación
-                                </summary>
-                                <div className="mt-4 space-y-3.5 text-left border-t border-slate-100 pt-4">
-                                  <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-1.5">
-                                    <h4 className="text-[10px] font-black text-slate-800 flex items-center gap-1">
-                                      <span>💡</span> ¿Cómo obtener la clave de aplicación?
-                                    </h4>
-                                    <ol className="text-[9px] text-slate-500 font-bold list-decimal list-inside space-y-0.5 leading-relaxed">
-                                      <li>Ve a la pestaña de Seguridad en tu Cuenta de Google.</li>
-                                      <li>Activa la Verificación en 2 pasos.</li>
-                                      <li>Busca Contraseñas de aplicación.</li>
-                                      <li>Genera una clave para MesaManager y cópiala aquí.</li>
-                                    </ol>
-                                  </div>
-                                  
-                                  <div className="space-y-1">
-                                    <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                                      Tu correo de Gmail
-                                    </label>
-                                    <input
-                                      type="text"
-                                      placeholder="mi-correo@gmail.com"
-                                      value={smtpUser}
-                                      onChange={(e) => setSmtpUser(e.target.value)}
-                                      className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                                      Contraseña de 16 letras
-                                    </label>
-                                    <input
-                                      type="password"
-                                      placeholder="••••••••••••••••"
-                                      value={smtpPass}
-                                      onChange={(e) => setSmtpPass(e.target.value)}
-                                      className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
-                                    />
-                                  </div>
-                                  <div className="flex justify-end pt-2">
-                                    <button
-                                      type="button"
-                                      onClick={saveGeneralSettings}
-                                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-[10px] rounded-xl transition-colors cursor-pointer"
-                                    >
-                                      Conectar Manualmente
-                                    </button>
-                                  </div>
-                                </div>
-                              </details>
-                            </div>
-                          )}
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                              Tu correo de Gmail
+                            </label>
+                            <input
+                              type="email"
+                              placeholder="mi-restaurante@gmail.com"
+                              value={smtpUser}
+                              onChange={(e) => setSmtpUser(e.target.value)}
+                              className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                              Contraseña de Aplicación de Google (16 letras)
+                            </label>
+                            <input
+                              type="password"
+                              placeholder="••••••••••••••••"
+                              value={smtpPass}
+                              onChange={(e) => setSmtpPass(e.target.value)}
+                              className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                            />
+                          </div>
+
+                          <div className="flex justify-end pt-2">
+                            <button
+                              type="button"
+                              onClick={saveGeneralSettings}
+                              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
+                            >
+                              Conectar Gmail
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <div className="space-y-4">
