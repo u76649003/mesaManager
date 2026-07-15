@@ -207,7 +207,7 @@ export async function sendReservationConfirmationEmail(reservation: Reservation,
     </table>
   `;
 
-  return await sendMail({ to: reservation.guest_email, subject, html });
+  return await sendMail({ to: reservation.guest_email, subject, html, tenantId: reservation.tenant_id ?? undefined });
 }
 
 /**
@@ -311,5 +311,5 @@ export async function sendPaymentRequestEmail(reservation: Reservation, paymentU
     </table>
   `;
 
-  return await sendMail({ to: reservation.guest_email, subject, html });
+  return await sendMail({ to: reservation.guest_email, subject, html, tenantId: reservation.tenant_id ?? undefined });
 }
