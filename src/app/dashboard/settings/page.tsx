@@ -140,6 +140,8 @@ export default function SettingsPage() {
   const [smtpFrom, setSmtpFrom] = useState('');
   const [stripeSecretKey, setStripeSecretKey] = useState('');
   const [stripePublishableKey, setStripePublishableKey] = useState('');
+  const [emailProvider, setEmailProvider] = useState<'gmail' | 'custom'>('gmail');
+
 
   useEffect(() => {
     if (rooms && rooms.length > 0 && (!activeRoom || activeRoom.id === 'temp')) {
@@ -170,7 +172,14 @@ export default function SettingsPage() {
           setSmtpFrom(tenant.smtp_from || '');
           setStripeSecretKey(tenant.stripe_secret_key || '');
           setStripePublishableKey(tenant.stripe_publishable_key || '');
+
+          if (tenant.smtp_host === 'smtp.gmail.com' || !tenant.smtp_host) {
+            setEmailProvider('gmail');
+          } else {
+            setEmailProvider('custom');
+          }
         }
+
       }
     }
     loadTenant();
@@ -180,15 +189,20 @@ export default function SettingsPage() {
     if (!tenantId) return;
     const { createClient } = await import('@/lib/supabase/client');
     const supabase = createClient();
+
+    const finalHost = emailProvider === 'gmail' ? 'smtp.gmail.com' : smtpHost;
+    const finalPort = emailProvider === 'gmail' ? 587 : smtpPort;
+    const finalFrom = smtpFrom || (emailProvider === 'gmail' && smtpUser ? `"MesaManager" <${smtpUser}>` : null);
+
     const { error } = await supabase
       .from('tenants')
       .update({
         grace_period_minutes: gracePeriod,
-        smtp_host: smtpHost || null,
-        smtp_port: smtpPort || 587,
+        smtp_host: finalHost || null,
+        smtp_port: finalPort || 587,
         smtp_user: smtpUser || null,
         smtp_pass: smtpPass || null,
-        smtp_from: smtpFrom || null,
+        smtp_from: finalFrom || null,
         stripe_secret_key: stripeSecretKey || null,
         stripe_publishable_key: stripePublishableKey || null,
       })
@@ -200,6 +214,7 @@ export default function SettingsPage() {
       toast.success('Ajustes guardados correctamente');
     }
   };
+
 
   const handleRoomImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -569,40 +584,88 @@ export default function SettingsPage() {
                           <span>📧</span> Servidor de Correo (SMTP)
                         </h3>
                       </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="col-span-2 space-y-1">
-                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                            Servidor Host
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="smtp.gmail.com"
-                            value={smtpHost}
-                            onChange={(e) => setSmtpHost(e.target.value)}
-                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                            Puerto
-                          </label>
-                          <input
-                            type="number"
-                            placeholder="587"
-                            value={smtpPort}
-                            onChange={(e) => setSmtpPort(parseInt(e.target.value) || 587)}
-                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
-                          />
-                        </div>
+
+                      {/* Select Provider */}
+                      <div className="flex bg-slate-100 p-1 rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEmailProvider('gmail');
+                            setSmtpHost('smtp.gmail.com');
+                            setSmtpPort(587);
+                          }}
+                          className={cn(
+                            "flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all cursor-pointer",
+                            emailProvider === 'gmail'
+                              ? "bg-white text-slate-900 shadow-sm"
+                              : "text-slate-500 hover:text-slate-850"
+                          )}
+                        >
+                          Conectar Gmail
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEmailProvider('custom')}
+                          className={cn(
+                            "flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all cursor-pointer",
+                            emailProvider === 'custom'
+                              ? "bg-white text-slate-900 shadow-sm"
+                              : "text-slate-500 hover:text-slate-850"
+                          )}
+                        >
+                          Configuración Manual
+                        </button>
                       </div>
+
+                      {emailProvider === 'gmail' ? (
+                        <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-2xl space-y-2">
+                          <h4 className="text-[10px] font-black text-blue-900 flex items-center gap-1.5">
+                            <span>💡</span> ¿Cómo enlazar tu cuenta de Gmail?
+                          </h4>
+                          <ol className="text-[10px] text-blue-800 font-bold list-decimal list-inside space-y-1 leading-relaxed">
+                            <li>Ve a tu <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer" className="underline font-black text-blue-900 hover:text-blue-950">Seguridad de Google</a>.</li>
+                            <li>Activa la <strong>Verificación en 2 pasos</strong>.</li>
+                            <li>Busca <strong>"Contraseñas de aplicación"</strong> en tu cuenta.</li>
+                            <li>Crea una nueva contraseña llamada <strong>"MesaManager"</strong>.</li>
+                            <li>Introduce tu correo de Gmail y la contraseña de 16 letras obtenida abajo.</li>
+                          </ol>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-2 space-y-1">
+                            <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                              Servidor Host
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="smtp.gmail.com"
+                              value={smtpHost}
+                              onChange={(e) => setSmtpHost(e.target.value)}
+                              className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                              Puerto
+                            </label>
+                            <input
+                              type="number"
+                              placeholder="587"
+                              value={smtpPort}
+                              onChange={(e) => setSmtpPort(parseInt(e.target.value) || 587)}
+                              className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      )}
 
                       <div className="space-y-1">
                         <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                          Usuario / Correo
+                          {emailProvider === 'gmail' ? 'Tu correo de Gmail' : 'Usuario / Correo'}
                         </label>
                         <input
                           type="text"
-                          placeholder="mi-restaurante@gmail.com"
+                          placeholder={emailProvider === 'gmail' ? 'mi-correo@gmail.com' : 'usuario@host.com'}
                           value={smtpUser}
                           onChange={(e) => setSmtpUser(e.target.value)}
                           className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
@@ -611,7 +674,7 @@ export default function SettingsPage() {
 
                       <div className="space-y-1">
                         <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                          Contraseña de Correo
+                          {emailProvider === 'gmail' ? 'Contraseña de Aplicación de Google (16 letras)' : 'Contraseña de Correo'}
                         </label>
                         <input
                           type="password"
@@ -622,27 +685,31 @@ export default function SettingsPage() {
                         />
                       </div>
 
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
-                          Remitente (Email From)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder='"MesaManager" <mi-restaurante@gmail.com>'
-                          value={smtpFrom}
-                          onChange={(e) => setSmtpFrom(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
-                        />
-                      </div>
+                      {emailProvider === 'custom' && (
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-black text-slate-650 uppercase tracking-wider">
+                            Remitente (Email From)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder='"MesaManager" <mi-restaurante@gmail.com>'
+                            value={smtpFrom}
+                            onChange={(e) => setSmtpFrom(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-xs focus:border-blue-500"
+                          />
+                        </div>
+                      )}
+                      
                       <div className="flex justify-end pt-4 border-t border-slate-100">
                         <button
                           onClick={saveGeneralSettings}
                           className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer"
                         >
-                          Guardar SMTP
+                          Conectar Correo
                         </button>
                       </div>
                     </div>
+
 
                     {/* Stripe Settings Card */}
                     <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 shadow-md lg:col-span-2">
