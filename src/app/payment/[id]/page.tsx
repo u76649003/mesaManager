@@ -10,10 +10,14 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { CreditCard, Calendar, Clock, Users, ShieldCheck, CheckCircle2, Loader2, AlertCircle, ChefHat } from 'lucide-react';
 import { toast } from 'sonner';
+import { useSearchParams } from 'next/navigation';
+
 
 export default function PaymentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
   const [reservation, setReservation] = useState<Reservation | null>(null);
+
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -49,6 +53,26 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
         if (res.payment_status === 'paid') {
           setIsSuccess(true);
         }
+
+        // If we returned from Stripe Checkout with success, verify it
+        const successParam = searchParams.get('success');
+        const sessionIdParam = searchParams.get('session_id');
+        if (successParam === 'true' && sessionIdParam) {
+          setIsProcessing(true);
+          const { verifyPrepaymentSession } = await import('@/app/actions/payments');
+          const verifyRes = await verifyPrepaymentSession(id, sessionIdParam);
+          if (verifyRes.success) {
+            setIsSuccess(true);
+            setIsProcessing(false);
+            setIsLoading(false);
+            res.payment_status = 'paid';
+            res.status = 'confirmed';
+          } else {
+            toast.error(verifyRes.error || 'No se pudo verificar el pago.');
+            setIsProcessing(false);
+          }
+        }
+
 
         // Fetch tenant details
         const { data: ten, error: tenError } = await supabase
@@ -93,14 +117,29 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cardNumber || !cardExpiry || !cardCvv || !cardHolder) {
-      toast.error('Por favor, rellene todos los campos de la tarjeta');
+
+    if (reservation?.payment_method === 'online') {
+      setIsProcessing(true);
+      try {
+        const { createPrepaymentSession } = await import('@/app/actions/payments');
+        const result = await createPrepaymentSession(id, window.location.origin);
+        if (result.success && result.url) {
+          window.location.href = result.url; // Redirect to Stripe Checkout
+        } else {
+          toast.error(result.error || 'Error al iniciar la pasarela de Stripe');
+          setIsProcessing(false);
+        }
+      } catch (err) {
+        console.error('Error redirecting to Stripe:', err);
+        toast.error('Error de conexión con la pasarela de pagos');
+        setIsProcessing(false);
+      }
       return;
     }
 
     setIsProcessing(true);
 
-    // Simulate payment processing delay
+    // Simulate Bizum payment processing delay
     setTimeout(async () => {
       try {
         const supabase = createClient();
@@ -130,7 +169,6 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
           toast.success(`📧 Recibo de pago enviado a ${reservation.guest_email}`);
         }
 
-
         setIsSuccess(true);
       } catch (err) {
         console.error('Error recording payment:', err);
@@ -138,8 +176,9 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
       } finally {
         setIsProcessing(false);
       }
-    }, 2000);
+    }, 1500);
   };
+
 
   if (isLoading) {
     return (
@@ -290,54 +329,50 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
 
                 {/* Payment form */}
                 <form onSubmit={handlePay} className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-slate-700 font-extrabold text-xs">Titular de la tarjeta</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ej. Juan Pérez"
-                      value={cardHolder}
-                      onChange={(e) => setCardHolder(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl border-2 border-slate-300 bg-white text-slate-900 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all font-bold"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-slate-700 font-extrabold text-xs">Número de tarjeta</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="4000 1234 5678 9010"
-                      value={cardNumber}
-                      onChange={handleCardNumberChange}
-                      className="w-full px-4 py-3 rounded-2xl border-2 border-slate-300 bg-white text-slate-900 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all font-bold font-mono"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-slate-700 font-extrabold text-xs">Fecha de caducidad</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="MM/YY"
-                        value={cardExpiry}
-                        onChange={handleExpiryChange}
-                        className="w-full px-4 py-3 rounded-2xl border-2 border-slate-300 bg-white text-slate-900 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all font-bold font-mono"
-                      />
+                  {reservation.payment_method === 'online' ? (
+                    <div className="bg-slate-50 border-2 border-slate-200 p-5 rounded-2xl space-y-3.5 text-center">
+                      <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                        <CreditCard size={18} />
+                      </div>
+                      <div>
+                        <span className="text-slate-900 font-extrabold text-sm block">Pago Seguro con Stripe Checkout</span>
+                        <span className="text-slate-500 text-xs mt-1 block leading-relaxed font-bold">
+                          Serás redirigido de forma segura a la pasarela oficial de Stripe para completar el pago de <strong>{reservation.prepayment_amount} €</strong> con tu tarjeta de crédito o débito.
+                        </span>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-slate-700 font-extrabold text-xs">CVV</label>
-                      <input
-                        type="password"
-                        required
-                        placeholder="123"
-                        value={cardCvv}
-                        onChange={handleCvvChange}
-                        className="w-full px-4 py-3 rounded-2xl border-2 border-slate-300 bg-white text-slate-900 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all font-bold font-mono"
-                      />
+                  ) : (
+                    <div className="bg-slate-50 border-2 border-slate-200 p-5 rounded-2xl space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center shadow-inner text-lg">📲</div>
+                        <div>
+                          <span className="text-slate-900 font-extrabold text-sm block">Instrucciones de Pago por Bizum</span>
+                          <span className="text-slate-550 text-[10px] font-bold block uppercase tracking-wider">Envío manual</span>
+                        </div>
+                      </div>
+                      <div className="bg-white p-3.5 rounded-xl border border-slate-150 space-y-2.5 text-xs text-slate-700 font-bold">
+                        <div className="flex justify-between">
+                          <span className="text-slate-450">IMPORTE</span>
+                          <span className="text-slate-900 font-black text-sm">{reservation.prepayment_amount} €</span>
+                        </div>
+                        <div className="flex justify-between border-t border-slate-100 pt-2">
+                          <span className="text-slate-450">TELÉFONO BIZUM</span>
+                          <span className="text-slate-900 font-black">{reservation.bizum_phone || '600000000'}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-slate-100 pt-2">
+                          <span className="text-slate-450">BENEFICIARIO</span>
+                          <span className="text-slate-900 font-black">{reservation.bizum_name || 'Restaurante'}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-slate-100 pt-2">
+                          <span className="text-slate-450">CONCEPTO SUGERIDO</span>
+                          <span className="text-slate-900 font-black truncate max-w-[200px]">Reserva {reservation.guest_name}</span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-550 font-bold text-center">
+                        Una vez que hayas realizado el envío desde tu aplicación de banco, pulsa en el botón de abajo para informar al restaurante.
+                      </p>
                     </div>
-                  </div>
+                  )}
 
                   <button
                     type="submit"
@@ -347,16 +382,22 @@ export default function PaymentPage({ params }: { params: Promise<{ id: string }
                     {isProcessing ? (
                       <>
                         <Loader2 size={16} className="animate-spin" />
-                        <span>Procesando pago seguro...</span>
+                        <span>{reservation.payment_method === 'online' ? 'Abriendo pasarela de pago...' : 'Registrando confirmación...'}</span>
                       </>
                     ) : (
                       <>
                         <ShieldCheck size={16} />
-                        <span>Pagar {reservation.prepayment_amount} € de forma segura</span>
+                        <span>
+                          {reservation.payment_method === 'online'
+                            ? `Pagar ${reservation.prepayment_amount} € con Tarjeta`
+                            : `He realizado el Bizum de ${reservation.prepayment_amount} €`
+                          }
+                        </span>
                       </>
                     )}
                   </button>
                 </form>
+
 
                 <div className="text-center">
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
