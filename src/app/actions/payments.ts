@@ -112,6 +112,32 @@ export async function verifyPrepaymentSession(reservationId: string, sessionId: 
       return { success: false, error: error.message };
     }
 
+    // SEND AUTOMATIC CONFIRMATION EMAIL:
+    // Once payment status is successfully verified, trigger the final confirmation email to the guest.
+    if (res.guest_email) {
+      try {
+        const { sendReservationConfirmationEmail } = await import('@/app/actions/emails');
+        // Fetch room name if available
+        let roomName = 'Principal';
+        if (res.room_id) {
+          const { data: room } = await supabase
+            .from('rooms')
+            .select('name')
+            .eq('id', res.room_id)
+            .single();
+          if (room) roomName = room.name;
+        }
+
+        await sendReservationConfirmationEmail({
+          ...res,
+          payment_status: 'paid',
+          status: 'confirmed',
+        }, roomName, `¡Hola <strong>${res.guest_name}</strong>! Hemos recibido correctamente tu pago de garantía de <strong>${res.prepayment_amount} €</strong> y tu reserva ha quedado completamente confirmada. ¡Te esperamos!`);
+      } catch (emailErr) {
+        console.error('Error sending confirmation email after Stripe verification:', emailErr);
+      }
+    }
+
     return { success: true };
   } catch (error: any) {
     console.error('Error al verificar la sesión de pago:', error);
