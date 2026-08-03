@@ -344,7 +344,7 @@ export default function DashboardPage() {
             color: s.color
           });
         }
-        currentMin += 30;
+        currentMin += 15;
       }
     });
 

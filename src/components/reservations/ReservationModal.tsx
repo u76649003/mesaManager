@@ -245,6 +245,7 @@ export function ReservationModal() {
   const watchGuestName = watch('guest_name') || '';
   const watchPartySize = watch('party_size') || 2;
   const watchPrepaymentAmount = watch('prepayment_amount') || 20;
+  const watchDuration = watch('duration_minutes') || 90;
 
   // Track if we need to auto-generate the custom message
   useEffect(() => {
@@ -342,6 +343,15 @@ export function ReservationModal() {
   };
 
   const onSubmit = async (data: FormValues) => {
+    // Validate table conflicts before saving
+    for (const tableId of selectedTables) {
+      if (isTableReservedAtSlot(tableId)) {
+        const conflictingTable = tables.find((t) => t.id === tableId);
+        toast.error(`La Mesa ${conflictingTable?.label || 'seleccionada'} ya está reservada en el horario e intervalo de tiempo elegido.`);
+        return;
+      }
+    }
+
     // Table selection is optional - reservation can exist without a table
     if (selectedTables.length === 0) {
       // Proceed without table assignment
@@ -392,7 +402,7 @@ export function ReservationModal() {
       });
 
       // Send actual email if requested
-      if (data.send_email && data.guest_email) {
+      if ((data.send_email || data.is_prepayment) && data.guest_email) {
         const updatedRes = useReservationStore.getState().reservations.find(r => r.id === editingReservation.id);
         if (updatedRes) {
           const roomName = rooms.find(r => r.id === updatedRes.room_id)?.name || 'Principal';
@@ -517,7 +527,7 @@ export function ReservationModal() {
       }));
 
       // Trigger actual email sending
-      if (data.send_email && data.guest_email) {
+      if ((data.send_email || prepaymentRequired) && data.guest_email) {
         const roomName = rooms.find(r => r.id === insertedData.room_id)?.name || 'Principal';
         if (prepaymentRequired) {
           const origin = (typeof window !== 'undefined' && !window.location.origin.includes('localhost') && !window.location.origin.includes('capacitor'))
@@ -585,7 +595,7 @@ export function ReservationModal() {
         endMin += 1440;
       }
       
-      for (let timeMin = startMin; timeMin <= endMin; timeMin += 30) {
+      for (let timeMin = startMin; timeMin <= endMin; timeMin += 15) {
         const h = Math.floor((timeMin % 1440) / 60);
         const m = timeMin % 60;
         const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -654,6 +664,40 @@ export function ReservationModal() {
     });
 
     return occupiedIds.size >= totalActiveTables;
+  };
+
+  const isTableReservedAtSlot = (tableId: string) => {
+    if (!watchDate || !watchTime) return false;
+
+    const getMinutes = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+
+    const targetStart = getMinutes(watchTime);
+    const targetEnd = targetStart + Number(watchDuration);
+
+    return reservations.some((r) => {
+      if (r.date !== watchDate) return false;
+      if (r.status === 'cancelled' || r.status === 'no_show') return false;
+      if (r.is_prepayment && r.payment_status === 'pending') return false;
+      if (editingReservation && r.id === editingReservation.id) return false;
+
+      const resStart = getMinutes(r.time);
+      const resEnd = resStart + (r.duration_minutes || 90);
+
+      const overlap = targetStart < resEnd && targetEnd > resStart;
+      if (!overlap) return false;
+
+      if (r.table_id === tableId) return true;
+
+      if (r.group_id) {
+        const group = tableGroups.find((g) => g.id === r.group_id);
+        return group?.member_table_ids.includes(tableId) ?? false;
+      }
+
+      return false;
+    });
   };
 
   const isClosedDaySelected = watchDate ? isDateClosed(watchDate) : false;
@@ -1022,11 +1066,16 @@ export function ReservationModal() {
 
                                 const borderRadius = shape === 'circle' ? '50%' : shape === 'oval' ? '50%' : '8px';
 
+                                const isOccupied = isTableReservedAtSlot(table.id);
                                 return (
                                   <button
                                     key={table.id}
                                     type="button"
                                     onClick={() => {
+                                      if (isOccupied) {
+                                        toast.warning(`La Mesa ${table.label} ya está reservada en este intervalo de tiempo.`);
+                                        return;
+                                      }
                                       if (showMultiTableSelector) {
                                         toggleTableSelection(table.id);
                                       } else {
@@ -1043,15 +1092,21 @@ export function ReservationModal() {
                                       borderRadius,
                                     }}
                                     className={cn(
-                                      "transition-all flex flex-col items-center justify-center border-2 text-[9px] font-black shadow-sm cursor-pointer",
-                                      isSelected
-                                        ? "bg-blue-600 border-blue-600 text-white font-black scale-105 z-25 shadow-md"
-                                        : "bg-white border-slate-350 text-slate-800 hover:border-slate-400 hover:scale-105 hover:z-10"
+                                      "transition-all flex flex-col items-center justify-center border-2 text-[9px] font-black shadow-sm",
+                                      isOccupied
+                                        ? "bg-red-50 border-red-300 text-red-700 opacity-60 cursor-not-allowed"
+                                        : isSelected
+                                        ? "bg-blue-600 border-blue-600 text-white font-black scale-105 z-25 shadow-md cursor-pointer"
+                                        : "bg-white border-slate-350 text-slate-800 hover:border-slate-400 hover:scale-105 hover:z-10 cursor-pointer"
                                     )}
-                                    title={`Mesa ${table.label} (${cap}p)`}
+                                    title={isOccupied ? `Mesa ${table.label} - OCUPADA` : `Mesa ${table.label} (${cap}p)`}
                                   >
                                     <span className="leading-none font-black text-xs">{table.label}</span>
-                                    <span className="leading-none text-[9.5px] opacity-80 mt-0.5">{cap}p</span>
+                                    {isOccupied ? (
+                                      <span className="leading-none text-[8px] text-red-650 font-black mt-0.5 uppercase">Ocupada</span>
+                                    ) : (
+                                      <span className="leading-none text-[9.5px] opacity-80 mt-0.5">{cap}p</span>
+                                    )}
                                   </button>
                                 );
                               })}
@@ -1066,11 +1121,16 @@ export function ReservationModal() {
                             .map((table) => {
                               const isSelected = selectedTables.includes(table.id);
                               const cap = table.capacity ?? table.table_type?.capacity ?? 2;
+                              const isOccupied = isTableReservedAtSlot(table.id);
                               return (
                                 <button
                                   type="button"
                                   key={table.id}
                                   onClick={() => {
+                                    if (isOccupied) {
+                                      toast.warning(`La Mesa ${table.label} ya está reservada en este intervalo de tiempo.`);
+                                      return;
+                                    }
                                     if (showMultiTableSelector) {
                                       toggleTableSelection(table.id);
                                     } else {
@@ -1078,14 +1138,20 @@ export function ReservationModal() {
                                     }
                                   }}
                                   className={cn(
-                                    'p-3.5 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer text-xs font-bold',
-                                    isSelected
-                                      ? 'bg-blue-600 border-blue-600 text-white font-black shadow-md'
-                                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                                    'p-3.5 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center gap-0.5 text-xs font-bold',
+                                    isOccupied
+                                      ? 'bg-red-50 border-red-300 text-red-700 opacity-60 cursor-not-allowed'
+                                      : isSelected
+                                      ? 'bg-blue-600 border-blue-600 text-white font-black shadow-md cursor-pointer'
+                                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer'
                                   )}
                                 >
                                   <span className="font-extrabold">{table.label}</span>
-                                  <span className="text-[9px] opacity-75 font-semibold">{cap} pers.</span>
+                                  {isOccupied ? (
+                                    <span className="text-[8px] text-red-650 font-black uppercase">Ocupada</span>
+                                  ) : (
+                                    <span className="text-[9px] opacity-75 font-semibold">{cap} pers.</span>
+                                  )}
                                 </button>
                               );
                             })}

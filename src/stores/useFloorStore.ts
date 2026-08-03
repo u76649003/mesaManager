@@ -417,6 +417,7 @@ export const useFloorStore = create<FloorState>()(
 
           const table = get().tables.find((t) => t.id === tableId);
           const reservationId = table?.current_reservation_id;
+          const nowISO = new Date().toISOString();
 
           set((state) => {
             const newOccupied = { ...state.occupiedSince };
@@ -429,6 +430,7 @@ export const useFloorStore = create<FloorState>()(
                       status: 'cleaning',
                       occupied_since: undefined,
                       current_reservation_id: undefined,
+                      updated_at: nowISO,
                     }
                   : t
               ),
@@ -444,6 +446,7 @@ export const useFloorStore = create<FloorState>()(
               status: 'cleaning',
               occupied_since: null,
               current_reservation_id: null,
+              updated_at: nowISO,
             })
             .eq('id', tableId);
 
