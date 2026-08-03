@@ -37,6 +37,7 @@ export async function updateSession(request: NextRequest) {
 
   // Define paths that are public or for auth
   const isAuthPage = url.pathname.startsWith('/login') || url.pathname.startsWith('/register');
+  const isPaymentPage = url.pathname.startsWith('/payment');
   const isApiRoute = url.pathname.startsWith('/api');
   const isStaticFile = url.pathname.includes('.') || url.pathname.startsWith('/_next');
 
@@ -44,8 +45,8 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
-  if (!user && !isAuthPage) {
-    // If not authenticated and not on an auth page, redirect to /login
+  if (!user && !isAuthPage && !isPaymentPage) {
+    // If not authenticated and not on an auth/payment page, redirect to /login
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
