@@ -6,6 +6,7 @@ import { AlertTriangle, Clock, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFloorStore } from '@/stores/useFloorStore';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { toast } from 'sonner';
 
 import { useReservationStore } from '@/stores/useReservationStore';
 import { FloorCanvas } from '@/components/floor/FloorCanvas';
@@ -198,6 +199,7 @@ export default function DashboardPage() {
       const todayStr = now.toISOString().slice(0, 10);
       const curMin = now.getHours() * 60 + now.getMinutes();
 
+      // Check 1: Overdue reservations (no show / late arrival)
       const overdue = reservations.filter((r) => {
         if (r.date !== todayStr) return false;
         if (!['pending', 'confirmed'].includes(r.status)) return false;
@@ -207,7 +209,47 @@ export default function DashboardPage() {
         return curMin >= reservMin + grace;
       });
 
+      // Check 2: Table is still occupied when next reservation arrives
+      const occupiedAlerts = reservations.filter((r) => {
+        if (r.date !== todayStr) return false;
+        if (r.status !== 'confirmed') return false; // Must be confirmed but not seated yet
+        
+        const [rh, rm] = r.time.slice(0, 5).split(':').map(Number);
+        const reservMin = rh * 60 + rm;
+        const grace = (snoozedMinutes[`occupied-${r.id}`] || 0);
+        
+        // Has the reservation time arrived?
+        if (curMin < reservMin + grace) return false;
+
+        // Check if its assigned table(s) are occupied
+        const targetTableIds: string[] = [];
+        if (r.table_id) {
+          targetTableIds.push(r.table_id);
+        } else if (r.group_id) {
+          const group = tableGroups.find((g) => g.id === r.group_id);
+          if (group) {
+            targetTableIds.push(...group.member_table_ids);
+          }
+        }
+
+        if (targetTableIds.length === 0) return false;
+
+        return targetTableIds.some((tid) => {
+          const table = tables.find((t) => t.id === tid);
+          return table?.status === 'occupied';
+        });
+      });
+
       const newQueue: string[] = [];
+      
+      // Combine alerts (prioritize occupied table alert first)
+      occupiedAlerts.forEach((r) => {
+        const alertId = `occupied-${r.id}`;
+        if (!dismissedAlerts.has(alertId) && alertId !== currentAlert) {
+          newQueue.push(alertId);
+        }
+      });
+
       overdue.forEach((r) => {
         if (!dismissedAlerts.has(r.id) && r.id !== currentAlert) {
           newQueue.push(r.id);
@@ -228,7 +270,7 @@ export default function DashboardPage() {
     check();
     const interval = setInterval(check, 30000);
     return () => clearInterval(interval);
-  }, [reservations, snoozedMinutes, dismissedAlerts, currentAlert]);
+  }, [reservations, tables, tableGroups, snoozedMinutes, dismissedAlerts, currentAlert]);
 
   const handleSnoozeAlert = useCallback((reservationId: string) => {
     setSnoozedMinutes((prev) => ({ ...prev, [reservationId]: (prev[reservationId] || 0) + 5 }));
@@ -609,14 +651,42 @@ export default function DashboardPage() {
       {/* Overdue Reservation Alert Popup */}
       <AnimatePresence>
         {currentAlert && (() => {
-          const res = reservations.find((r) => r.id === currentAlert);
+          const isOccupiedAlert = currentAlert.startsWith('occupied-');
+          const resId = isOccupiedAlert ? currentAlert.slice(9) : currentAlert;
+          const res = reservations.find((r) => r.id === resId);
           if (!res) return null;
-          const grace = snoozedMinutes[res.id] || 0;
+          
+          const grace = snoozedMinutes[currentAlert] || 0;
           const [rh, rm] = res.time.slice(0, 5).split(':').map(Number);
           const resMin = rh * 60 + rm;
           const nowMin = nowTime.getHours() * 60 + nowTime.getMinutes();
           const minutesLate = nowMin - resMin;
           const remaining = overdueQueue.length;
+
+          // Find the table label(s) and any occupied table ID
+          let tableLabel = '—';
+          let conflictingTableId: string | null = null;
+          if (res.table_id) {
+            const t = tables.find((tbl) => tbl.id === res.table_id);
+            tableLabel = t ? `Mesa ${t.label}` : '—';
+            if (t?.status === 'occupied') {
+              conflictingTableId = t.id;
+            }
+          } else if (res.group_id) {
+            const group = tableGroups.find((g) => g.id === res.group_id);
+            if (group) {
+              const memberLabels = tables
+                .filter((tbl) => group.member_table_ids.includes(tbl.id))
+                .map((tbl) => tbl.label)
+                .join('+');
+              tableLabel = memberLabels ? `Mesas ${memberLabels}` : '—';
+              
+              const occupiedMember = tables.find((tbl) => group.member_table_ids.includes(tbl.id) && tbl.status === 'occupied');
+              if (occupiedMember) {
+                conflictingTableId = occupiedMember.id;
+              }
+            }
+          }
 
           return (
             <motion.div
@@ -635,14 +705,25 @@ export default function DashboardPage() {
                 className="bg-white rounded-3xl shadow-2xl border-2 border-orange-200 w-full max-w-md mx-4 overflow-hidden"
               >
                 {/* Header */}
-                <div className="bg-gradient-to-r from-orange-500 to-red-500 px-6 py-5 flex items-start justify-between">
+                <div className={cn(
+                  "px-6 py-5 flex items-start justify-between text-white",
+                  isOccupiedAlert 
+                    ? "bg-gradient-to-r from-red-650 to-orange-600 border-b border-red-100" 
+                    : "bg-gradient-to-r from-orange-500 to-red-500"
+                )}>
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 bg-white/20 rounded-2xl flex items-center justify-center">
                       <AlertTriangle size={22} className="text-white" />
                     </div>
                     <div>
-                      <p className="text-white font-black text-sm uppercase tracking-wider">⚠️ Reserva Sin Sentar</p>
-                      <p className="text-orange-100 text-xs font-bold mt-0.5">Lleva {minutesLate} min de retraso</p>
+                      <p className="font-black text-sm uppercase tracking-wider">
+                        {isOccupiedAlert ? '⚠️ Mesa Sigue Ocupada' : '⚠️ Reserva Sin Sentar'}
+                      </p>
+                      <p className="text-orange-100 text-xs font-bold mt-0.5">
+                        {isOccupiedAlert 
+                          ? `Debía sentarse a las ${res.time.slice(0, 5)}`
+                          : `Lleva ${minutesLate} min de retraso`}
+                      </p>
                     </div>
                   </div>
                   {remaining > 0 && (
@@ -666,27 +747,42 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-3 mb-5">
-                    <div className="bg-slate-50 rounded-2xl p-3 text-center border border-slate-200">
-                      <Clock size={14} className="text-slate-400 mx-auto mb-1" />
-                      <p className="font-black text-slate-900 text-sm">{res.time.slice(0, 5)}</p>
-                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Hora</p>
+                  {isOccupiedAlert ? (
+                    <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-5 text-red-950 text-xs font-semibold leading-relaxed">
+                      ❌ La <strong>{tableLabel}</strong> asignada a esta reserva sigue en servicio y ocupada por comensales anteriores.
+                      <p className="mt-2 text-[11px] text-slate-505 font-extrabold">
+                        Puedes posponer la llegada de la reserva 5 minutos o liberar la mesa anterior directamente para mandarla a limpieza.
+                      </p>
                     </div>
-                    <div className="bg-slate-50 rounded-2xl p-3 text-center border border-slate-200">
-                      <span className="text-sm block mb-1">👥</span>
-                      <p className="font-black text-slate-900 text-sm">{res.party_size}</p>
-                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Personas</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-3 mb-5">
+                      <div className="bg-slate-50 rounded-2xl p-3 text-center border border-slate-200">
+                        <Clock size={14} className="text-slate-400 mx-auto mb-1" />
+                        <p className="font-black text-slate-900 text-sm">{res.time.slice(0, 5)}</p>
+                        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Hora</p>
+                      </div>
+                      <div className="bg-slate-50 rounded-2xl p-3 text-center border border-slate-200">
+                        <span className="text-sm block mb-1">👥</span>
+                        <p className="font-black text-slate-900 text-sm">{res.party_size}</p>
+                        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Personas</p>
+                      </div>
+                      <div className="bg-slate-50 rounded-2xl p-3 text-center border border-slate-200">
+                        <span className="text-sm block mb-1">🪑</span>
+                        <p className="font-black text-slate-900 text-sm truncate">{tableLabel}</p>
+                        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Mesa</p>
+                      </div>
                     </div>
-                    <div className="bg-slate-50 rounded-2xl p-3 text-center border border-slate-200">
-                      <span className="text-sm block mb-1">🪑</span>
-                      <p className="font-black text-slate-900 text-sm truncate">{res.table?.label || res.room?.name || '—'}</p>
-                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Mesa</p>
-                    </div>
-                  </div>
+                  )}
 
-                  {grace > 0 && (
+                  {grace > 0 && !isOccupiedAlert && (
                     <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5 mb-4 text-center">
                       <p className="text-amber-700 text-xs font-black">⏱ Tiempo extra concedido: +{grace} min</p>
+                    </div>
+                  )}
+
+                  {grace > 0 && isOccupiedAlert && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5 mb-4 text-center">
+                      <p className="text-amber-700 text-xs font-black">⏱ Espera de mesa pospuesta: +{grace} min</p>
                     </div>
                   )}
 
@@ -699,22 +795,40 @@ export default function DashboardPage() {
                   {/* Actions */}
                   <div className="flex flex-col gap-2.5">
                     <button
-                      onClick={() => handleSnoozeAlert(res.id)}
+                      onClick={() => handleSnoozeAlert(currentAlert)}
                       className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-2xl transition-colors text-sm flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                     >
                       <Clock size={16} />
-                      Posponer cancelación +5 min
+                      Posponer llegada +5 min
                     </button>
+
+                    {isOccupiedAlert && conflictingTableId && (
+                      <button
+                        onClick={async () => {
+                          const floorStore = useFloorStore.getState();
+                          await floorStore.clearTable(conflictingTableId!);
+                          toast.success('Mesa anterior liberada e iniciada en limpieza.');
+                          handleDismissAlert(currentAlert);
+                        }}
+                        className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl transition-colors text-sm flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                      >
+                        ✅ Liberar y Limpiar Mesa Anterior
+                      </button>
+                    )}
+
+                    {!isOccupiedAlert && (
+                      <button
+                        onClick={() => handleCancelFromAlert(res.id)}
+                        className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl transition-colors text-sm flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                      >
+                        <X size={16} />
+                        Cancelar reserva
+                      </button>
+                    )}
+
                     <button
-                      onClick={() => handleCancelFromAlert(res.id)}
-                      className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl transition-colors text-sm flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                    >
-                      <X size={16} />
-                      Cancelar reserva
-                    </button>
-                    <button
-                      onClick={() => handleDismissAlert(res.id)}
-                      className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black rounded-2xl transition-colors text-xs cursor-pointer"
+                      onClick={() => handleDismissAlert(currentAlert)}
+                      className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-655 font-black rounded-2xl transition-colors text-xs cursor-pointer"
                     >
                       Ignorar esta vez
                     </button>

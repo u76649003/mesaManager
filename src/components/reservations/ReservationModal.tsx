@@ -883,6 +883,43 @@ export function ReservationModal() {
                         <option value="">Selecciona hora...</option>
                         {timeSlots.map((t) => {
                           const isFull = watchDate ? isTimeSlotFullyBooked(watchDate, t) : false;
+
+                          let isConflicting = false;
+                          if (watchDate && selectedTables.length > 0) {
+                            isConflicting = selectedTables.some((tableId) => {
+                              const getMinutes = (timeStr: string) => {
+                                const [h, m] = timeStr.split(':').map(Number);
+                                return h * 60 + m;
+                              };
+                              const targetStart = getMinutes(t);
+                              const targetEnd = targetStart + Number(watchDuration);
+
+                              return reservations.some((r) => {
+                                if (r.date !== watchDate) return false;
+                                if (r.status === 'cancelled' || r.status === 'no_show') return false;
+                                if (r.is_prepayment && r.payment_status === 'pending') return false;
+                                if (editingReservation && r.id === editingReservation.id) return false;
+
+                                const resStart = getMinutes(r.time);
+                                const resEnd = resStart + (r.duration_minutes || 90);
+
+                                const overlap = targetStart < resEnd && targetEnd > resStart;
+                                if (!overlap) return false;
+
+                                if (r.table_id === tableId) return true;
+
+                                if (r.group_id) {
+                                  const group = tableGroups.find((g) => g.id === r.group_id);
+                                  return group?.member_table_ids.includes(tableId) ?? false;
+                                }
+
+                                return false;
+                              });
+                            });
+                          }
+
+                          if (isConflicting) return null;
+
                           return (
                             <option key={t} value={t} disabled={isFull}>
                               {t} {isFull ? ' (Completo - Sin mesas)' : ''}
