@@ -152,8 +152,8 @@ export function TableItem({ table, isSelected, isDragging, isEditMode, onClick, 
   const bodyR = isCircle ? Math.min(tw, th) / 2 : 14;
 
   // ── Font sizes ──
-  const labelFontSize = Math.max(12, Math.min(18, tw / 5.2));
-  const subFontSize   = Math.max(9,  Math.min(12, tw / 8));
+  const labelFontSize = Math.max(15, Math.min(24, tw / 4.2));
+  const subFontSize   = Math.max(11, Math.min(15, tw / 6.5));
   const timerFontSize = Math.max(13,  Math.min(17, tw / 6.5));
 
   const containerStyle: React.CSSProperties = {
@@ -230,7 +230,7 @@ export function TableItem({ table, isSelected, isDragging, isEditMode, onClick, 
           strokeWidth={1.5}
         />
 
-        {/* ── Status label (big) ── */}
+        {/* ── Table name (now big) ── */}
         <text
           x={ox}
           y={oy - (isRunning ? 9 : 4)}
@@ -242,21 +242,21 @@ export function TableItem({ table, isSelected, isDragging, isEditMode, onClick, 
           fontFamily="system-ui,-apple-system,sans-serif"
           letterSpacing="-0.5"
         >
-          {st.label}
+          {table.label}
         </text>
 
-        {/* ── Table id + capacity ── */}
+        {/* ── Status label + capacity (now sub-text) ── */}
         <text
           x={ox}
           y={oy + (isRunning ? 6 : 12)}
           textAnchor="middle"
           dominantBaseline="middle"
-          fill="rgba(255,255,255,0.80)"
+          fill="rgba(255,255,255,0.85)"
           fontSize={subFontSize}
           fontWeight="700"
           fontFamily="system-ui,-apple-system,sans-serif"
         >
-          {table.label} · {capacity}p
+          {st.label} · {capacity}p
         </text>
 
         {/* ── Timer (occupied) ── */}

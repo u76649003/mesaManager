@@ -7,7 +7,8 @@ import { useTableTimer } from '@/hooks/useTableTimer';
 import { getStatusLabel, getStatusColor, cn } from '@/lib/utils';
 import { X, Clock, Users, CheckCircle2, Trash2, CalendarPlus, RefreshCw } from 'lucide-react';
 import type { Table } from '@/types';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 interface TableDetailModalProps {
   table: Table | null;
@@ -24,6 +25,25 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
   );
 
   if (!table) return null;
+
+  // Get all active reservations for this table on the selected date (direct or group match)
+  const tableReservations = reservations.filter((r) => {
+    if (r.date !== selectedDate) return false;
+    if (r.status === 'cancelled' || r.status === 'no_show') return false;
+    if (r.is_prepayment && r.payment_status === 'pending') return false;
+
+    if (r.table_id === table.id) return true;
+
+    if (r.group_id) {
+      const group = tableGroups.find((g) => g.id === r.group_id);
+      return group?.member_table_ids.includes(table.id) ?? false;
+    }
+
+    return false;
+  });
+
+  const sortedTableReservations = [...tableReservations].sort((a, b) => a.time.localeCompare(b.time));
+
 
   const isToday = selectedDate === format(new Date(), 'yyyy-MM-dd');
   const statusColor = getStatusColor(table.status);
@@ -199,28 +219,81 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
                 </div>
               )}
 
+              {/* Daily Reservations List */}
+              <div className="mx-4 mt-3.5 p-4 bg-slate-50 rounded-2xl border-2 border-slate-200 shadow-sm space-y-3">
+                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                  <p className="text-slate-650 text-[10px] uppercase font-black tracking-wider flex items-center gap-1.5">
+                    <span>📅</span> Horas Reservadas ({format(parseISO(selectedDate), "d 'de' MMM", { locale: es })})
+                  </p>
+                  <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-full">
+                    {sortedTableReservations.length}
+                  </span>
+                </div>
+
+                {sortedTableReservations.length === 0 ? (
+                  <p className="text-slate-500 text-xs font-bold text-center py-2">
+                    Sin reservas asignadas para hoy
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {sortedTableReservations.map((res) => {
+                      const isCurrent = table.current_reservation?.id === res.id;
+                      return (
+                        <div
+                          key={res.id}
+                          className={cn(
+                            "flex justify-between items-center px-3 py-2.5 rounded-xl border transition-all text-xs font-bold",
+                            isCurrent
+                              ? "bg-orange-50 border-orange-200 text-orange-950 shadow-inner"
+                              : "bg-white border-slate-150 text-slate-750"
+                          )}
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-sm text-slate-900">{res.time.slice(0, 5)}</span>
+                              <span className="text-[11px] text-slate-600 truncate max-w-[120px]">{res.guest_name}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-450 font-bold block mt-0.5">
+                              {res.party_size} personas · {res.duration_minutes || 90} min
+                            </span>
+                          </div>
+                          <span
+                            className="text-[9px] uppercase font-black px-2 py-0.5 rounded-full"
+                            style={{
+                              backgroundColor: getStatusColor(res.status) + '15',
+                              color: getStatusColor(res.status),
+                            }}
+                          >
+                            {getStatusLabel(res.status)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Reserva actual y Camarero asignado */}
               {table.current_reservation && (
-                <div className="mx-4 mt-3.5 p-4 bg-slate-50 rounded-2xl border-2 border-slate-200 shadow-sm">
-                  <p className="text-slate-500 text-[10px] uppercase font-black tracking-wider mb-1.5">Reserva Activa</p>
-                  <p className="text-slate-900 font-extrabold text-sm leading-tight">{table.current_reservation.guest_name}</p>
-                  <p className="text-slate-600 text-xs font-bold mt-0.5">
-                    Hora: {table.current_reservation.time.slice(0, 5)} · Comensales: {table.current_reservation.party_size}
-                  </p>
+                <div className="mx-4 mt-3 p-3.5 bg-orange-50/40 rounded-2xl border-2 border-orange-100/70 shadow-sm space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                    <p className="text-orange-950 text-[10px] uppercase font-black tracking-wider">Detalle Reserva Activa ({table.current_reservation.time.slice(0, 5)})</p>
+                  </div>
                   
                   {table.current_reservation.waiter && (
-                    <div className="mt-3 pt-2.5 border-t border-slate-200 flex items-center gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
                       <span 
                         className="w-2.5 h-2.5 rounded-full border border-white" 
                         style={{ backgroundColor: table.current_reservation.waiter.color }}
                       />
-                      <span className="text-slate-500 text-xs font-bold">Atendido por:</span>
-                      <span className="text-slate-900 text-xs font-black">{table.current_reservation.waiter.name}</span>
+                      <span>Atendido por:</span>
+                      <span className="text-slate-950 font-black">{table.current_reservation.waiter.name}</span>
                     </div>
                   )}
 
                   {table.current_reservation.is_prepayment && (table.current_reservation.prepayment_amount ?? 0) > 0 && (
-                    <div className="mt-3 pt-2.5 border-t border-slate-200 space-y-1 text-[11px] text-emerald-800 font-bold bg-emerald-50/50 p-2.5 rounded-xl border border-emerald-200">
+                    <div className="space-y-1 text-[11px] text-emerald-800 font-bold bg-emerald-50/50 p-2.5 rounded-xl border border-emerald-200">
                       <p className="flex items-center gap-1 font-black">
                         💵 Anticipo Cobrado: {table.current_reservation.prepayment_amount} €
                       </p>
@@ -254,23 +327,21 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
                   </>
                 ) : (
                   <>
-                    {table.status === 'available' && (
-                      <>
-                        {isToday && (
-                          <ActionButton
-                            icon={<CheckCircle2 size={18} />}
-                            label="Sentar Clientes Ahora"
-                            color="indigo"
-                            onClick={handleSeat}
-                          />
-                        )}
-                        <ActionButton
-                          icon={<CalendarPlus size={18} />}
-                          label="Crear Nueva Reserva"
-                          color="slate"
-                          onClick={() => { openModal(undefined, table.id); onClose(); }}
-                        />
-                      </>
+                    {/* Botón de crear reserva siempre disponible al inicio para mayor comodidad */}
+                    <ActionButton
+                      icon={<CalendarPlus size={18} />}
+                      label="Crear Nueva Reserva"
+                      color="slate"
+                      onClick={() => { openModal(undefined, table.id); onClose(); }}
+                    />
+
+                    {table.status === 'available' && isToday && (
+                      <ActionButton
+                        icon={<CheckCircle2 size={18} />}
+                        label="Sentar Clientes Ahora"
+                        color="indigo"
+                        onClick={handleSeat}
+                      />
                     )}
 
                     {table.status === 'occupied' && (
@@ -290,19 +361,13 @@ export function TableDetailModal({ table, onClose }: TableDetailModalProps) {
                       </>
                     )}
 
-                    {table.status === 'reserved' && (
-                      isToday ? (
-                        <ActionButton
-                          icon={<CheckCircle2 size={18} />}
-                          label="Sentar Clientes (Confirmar Llegada)"
-                          color="indigo"
-                          onClick={handleSeat}
-                        />
-                      ) : (
-                        <div className="text-xs text-slate-500 font-bold text-center py-3 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
-                          Solo se pueden sentar clientes el día de hoy
-                        </div>
-                      )
+                    {table.status === 'reserved' && isToday && (
+                      <ActionButton
+                        icon={<CheckCircle2 size={18} />}
+                        label="Sentar Clientes (Confirmar Llegada)"
+                        color="indigo"
+                        onClick={handleSeat}
+                      />
                     )}
 
                     {table.status === 'cleaning' && (
