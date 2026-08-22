@@ -20,8 +20,18 @@ test('parses a prepayment amount and keeps it as a proposal', () => {
   });
 });
 
-test('does not turn an incomplete mutation into an executable intent', () => {
-  assert.deepEqual(parseAssistantIntent('Crea una reserva para Laura mañana'), { action: 'help' });
+test('keeps an incomplete reservation as a conversational draft', () => {
+  assert.deepEqual(parseAssistantIntent('Reserva la mesa 4 para 3 mañana a las 9', new Date(2026, 7, 22)), {
+    action: 'draft_reservation', tableLabel: '4', guestName: undefined, date: '2026-08-23', time: '21:00', partySize: 3,
+  });
+});
+
+test('queries reservations for another spoken date', () => {
+  assert.deepEqual(parseAssistantIntent('qué reservas tengo mañana', new Date(2026, 7, 22)), { action: 'list_reservations_date', date: '2026-08-23' });
+});
+
+test('seats only an exact reservation reference', () => {
+  assert.deepEqual(parseAssistantIntent('Sienta la reserva RES-2026-000123'), { action: 'seat_reservation', reference: 'RES-2026-000123' });
 });
 
 test('understands today reservations by voice', () => {
