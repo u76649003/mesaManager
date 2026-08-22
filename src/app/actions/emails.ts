@@ -313,3 +313,41 @@ export async function sendPaymentRequestEmail(reservation: Reservation, paymentU
 
   return await sendMail({ to: reservation.guest_email, subject, html, tenantId: reservation.tenant_id ?? undefined });
 }
+
+export async function sendAssistantPaymentRequest(
+  reservationId: string,
+  method: 'online' | 'bizum',
+  amount: number,
+  origin: string,
+) {
+  const supabase = await createClient();
+  const { data: reservation, error } = await supabase
+    .from('reservations')
+    .select('*, tenant:tenants(bizum_phone, bizum_name)')
+    .eq('id', reservationId)
+    .single();
+  if (error || !reservation) return { success: false, error: 'No se encontró la reserva.' };
+  if (!reservation.guest_email) return { success: false, error: 'La reserva no tiene correo del cliente.' };
+  const bizumPhone = reservation.bizum_phone || reservation.tenant?.bizum_phone;
+  const bizumName = reservation.bizum_name || reservation.tenant?.bizum_name;
+  if (method === 'bizum' && (!bizumPhone || !bizumName)) return { success: false, error: 'Configura el teléfono y beneficiario de Bizum en Ajustes.' };
+
+  const { data: updated, error: updateError } = await supabase.from('reservations').update({
+    is_prepayment: true,
+    prepayment_amount: amount,
+    prepayment_reason: 'Garantía de reserva',
+    payment_method: method,
+    payment_status: 'pending',
+    status: 'pending',
+    send_email: true,
+    bizum_phone: method === 'bizum' ? bizumPhone : null,
+    bizum_name: method === 'bizum' ? bizumName : null,
+  }).eq('id', reservationId).select('*').single();
+  if (updateError || !updated) return { success: false, error: updateError?.message || 'No se pudo preparar el pago.' };
+
+  const baseUrl = origin.includes('localhost') || origin.includes('capacitor') ? 'https://mesa-manager.vercel.app' : origin;
+  const emailResult = await sendPaymentRequestEmail(updated, `${baseUrl}/payment/${reservationId}`);
+  if (!emailResult) return { success: false, error: 'No se pudo preparar el correo.' };
+  if ('simulated' in emailResult && emailResult.simulated) return { success: false, error: 'El correo no está configurado. Conecta Gmail o SMTP en Ajustes.' };
+  return emailResult;
+}
