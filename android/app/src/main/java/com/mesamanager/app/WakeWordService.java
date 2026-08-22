@@ -11,6 +11,8 @@ import android.os.IBinder;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import androidx.core.app.NotificationCompat;
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -20,8 +22,11 @@ public class WakeWordService extends Service implements RecognitionListener {
     public static final String ACTION_START = "com.mesamanager.app.WAKE_START";
     public static final String ACTION_STOP = "com.mesamanager.app.WAKE_STOP";
     public static final String ACTION_COMMAND = "com.mesamanager.app.WAKE_COMMAND";
+    public static final String ACTION_SPEAK = "com.mesamanager.app.WAKE_SPEAK";
     public static final String EXTRA_NAME = "assistantName";
     public static final String EXTRA_COMMAND = "command";
+    public static final String EXTRA_TEXT = "text";
+    public static final String EXTRA_EXPECT_REPLY = "expectReply";
     private static final String CHANNEL_ID = "mesamanager_assistant";
     private static final int NOTIFICATION_ID = 1707;
 
@@ -34,6 +39,9 @@ public class WakeWordService extends Service implements RecognitionListener {
     private String lastCommand = "";
     private long lastCommandAt = 0;
     private long promptPauseUntil = 0;
+    private TextToSpeech tts;
+    private boolean speaking = false;
+    private int conversationGeneration = 0;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -43,11 +51,23 @@ public class WakeWordService extends Service implements RecognitionListener {
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) tts.setLanguage(new Locale("es", "ES"));
+        });
+        tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override public void onStart(String utteranceId) { speaking = true; }
+            @Override public void onError(String utteranceId) { finishSpeaking(true); }
+            @Override public void onDone(String utteranceId) { finishSpeaking(true); }
+        });
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopping = true; stopListening(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_SPEAK.equals(intent.getAction())) {
+            speak(intent.getStringExtra(EXTRA_TEXT), intent.getBooleanExtra(EXTRA_EXPECT_REPLY, true));
+            return START_STICKY;
         }
         String name = intent == null ? null : intent.getStringExtra(EXTRA_NAME);
         if (name != null && !name.trim().isEmpty()) wakePhrase = normalize("ey " + name.trim());
@@ -58,7 +78,7 @@ public class WakeWordService extends Service implements RecognitionListener {
     }
 
     private void startListening() {
-        if (stopping || !SpeechRecognizer.isRecognitionAvailable(this)) return;
+        if (stopping || speaking || !SpeechRecognizer.isRecognitionAvailable(this)) return;
         if (recognizer == null) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this);
             recognizer.setRecognitionListener(this);
@@ -75,6 +95,26 @@ public class WakeWordService extends Service implements RecognitionListener {
             long delay = Math.max(650, promptPauseUntil - System.currentTimeMillis());
             new android.os.Handler(getMainLooper()).postDelayed(this::startListening, delay);
         }
+    }
+
+    private void speak(String text, boolean expectReply) {
+        if (text == null || text.trim().isEmpty() || tts == null) return;
+        speaking = true; awaitingCommand = expectReply; wakeAcknowledged = false; conversationGeneration++;
+        if (recognizer != null) recognizer.cancel();
+        Bundle params = new Bundle();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "mesamanager-" + System.currentTimeMillis());
+    }
+
+    private void finishSpeaking(boolean expectReply) {
+        new android.os.Handler(getMainLooper()).post(() -> {
+            speaking = false;
+            int generation = conversationGeneration;
+            promptPauseUntil = System.currentTimeMillis() + 350;
+            restart();
+            new android.os.Handler(getMainLooper()).postDelayed(() -> {
+                if (generation == conversationGeneration && !speaking) awaitingCommand = false;
+            }, 12000);
+        });
     }
 
     private void consume(Bundle results, boolean isFinal) {
@@ -145,5 +185,5 @@ public class WakeWordService extends Service implements RecognitionListener {
     @Override public void onEndOfSpeech() {}
     @Override public void onEvent(int eventType, Bundle params) {}
     @Override public IBinder onBind(Intent intent) { return null; }
-    @Override public void onDestroy() { stopping = true; stopListening(); super.onDestroy(); }
+    @Override public void onDestroy() { stopping = true; stopListening(); if (tts != null) { tts.stop(); tts.shutdown(); } super.onDestroy(); }
 }

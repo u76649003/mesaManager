@@ -73,4 +73,16 @@ public class WakeWordPlugin extends Plugin {
         getContext().startService(intent);
         JSObject result = new JSObject(); result.put("active", false); call.resolve(result);
     }
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        String text = call.getString("text", "").trim();
+        if (text.isEmpty()) { call.resolve(); return; }
+        Intent intent = new Intent(getContext(), WakeWordService.class);
+        intent.setAction(WakeWordService.ACTION_SPEAK);
+        intent.putExtra(WakeWordService.EXTRA_TEXT, text);
+        intent.putExtra(WakeWordService.EXTRA_EXPECT_REPLY, call.getBoolean("expectReply", true));
+        ContextCompat.startForegroundService(getContext(), intent);
+        call.resolve();
+    }
 }
