@@ -13,10 +13,12 @@ import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
 import androidx.core.app.NotificationCompat;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Comparator;
 
 public class WakeWordService extends Service implements RecognitionListener {
     public static final String ACTION_START = "com.mesamanager.app.WAKE_START";
@@ -52,7 +54,17 @@ public class WakeWordService extends Service implements RecognitionListener {
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
         tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS) tts.setLanguage(new Locale("es", "ES"));
+            if (status == TextToSpeech.SUCCESS) {
+                Locale spanish = new Locale("es", "ES");
+                tts.setLanguage(spanish);
+                Voice best = tts.getVoices() == null ? null : tts.getVoices().stream()
+                    .filter(voice -> voice.getLocale() != null && "es".equals(voice.getLocale().getLanguage()))
+                    .max(Comparator.comparingInt(Voice::getQuality)
+                        .thenComparingInt(voice -> voice.isNetworkConnectionRequired() ? 1 : 0)).orElse(null);
+                if (best != null) tts.setVoice(best);
+                tts.setSpeechRate(0.94f);
+                tts.setPitch(1.02f);
+            }
         });
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
             @Override public void onStart(String utteranceId) { speaking = true; }
