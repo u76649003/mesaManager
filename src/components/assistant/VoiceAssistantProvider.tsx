@@ -39,6 +39,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const isAuthPage = ['/login', '/register', '/payment'].some((path) => pathname.startsWith(path));
   const tables = useFloorStore((s) => s.tables);
   const reservations = useReservationStore((s) => s.reservations);
+  const todayReservations = useReservationStore((s) => s.todayReservations);
   const fetchReservations = useReservationStore((s) => s.fetchReservations);
   const selectedDate = useReservationStore((s) => s.selectedDate);
   const selectedTime = useReservationStore((s) => s.selectedTime);
@@ -80,24 +81,29 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     setTranscript(command); setOpen(true); setProposal(null); const intent = parseAssistantIntent(command); let message = '';
     if (intent.action === 'check_table') { const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === intent.tableLabel.toLocaleLowerCase('es-ES')); message = !table ? `No encuentro la mesa ${intent.tableLabel}.` : overlaps(table, reservations, selectedDate, selectedTime) ? `La mesa ${table.label} no está disponible en la selección actual.` : intent.partySize && capacity(table) < intent.partySize ? `Está libre, pero solo tiene capacidad para ${capacity(table)}.` : `Sí, la mesa ${table.label} está disponible.`; }
     else if (intent.action === 'recommend_table') { const best = tables.filter((t) => t.is_active && capacity(t) >= intent.partySize && !overlaps(t, reservations, selectedDate, selectedTime)).sort((a, b) => capacity(a) - capacity(b))[0]; message = best ? `La mejor opción visible es la mesa ${best.label}. La disponibilidad definitiva se valida al crear la reserva.` : `No veo una mesa individual libre para ${intent.partySize}.`; }
-    else if (intent.action === 'help') message = 'Puedo consultar mesas o proponer crear, modificar, cancelar una reserva y solicitar un anticipo. Para cambios usa fecha ISO, hora y el número RES completo.';
+    else if (intent.action === 'list_today_reservations') { const active = todayReservations.filter((r) => !['cancelled', 'no_show'].includes(r.status)); message = active.length ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'}` : 'Hoy no tienes reservas activas.'; }
+    else if (intent.action === 'list_free_tables') { const free = tables.filter((t) => t.is_active && !overlaps(t, reservations, selectedDate, selectedTime)); message = free.length ? `Tienes ${free.length} mesas libres: ${free.slice(0, 10).map((t) => t.label).join(', ')}${free.length > 10 ? ` y ${free.length - 10} más` : ''}.` : 'No veo mesas libres en este momento.'; }
+    else if (intent.action === 'help') message = 'Puedo decirte las reservas de hoy, qué mesas están libres, recomendar una mesa o proponer crear, modificar y cancelar reservas.';
     else { setWorking(true); try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' Revisa los datos y pulsa Confirmar.'; } catch (error) { message = error instanceof Error ? error.message : 'No pude preparar la operación.'; } finally { setWorking(false); } }
     reply(message);
-  }, [buildProposal, reply, reservations, selectedDate, selectedTime, tables, transcript]);
+  }, [buildProposal, reply, reservations, selectedDate, selectedTime, tables, todayReservations, transcript]);
   useEffect(() => { answerRef.current = answer; }, [answer]);
 
   useEffect(() => {
     if (!assistantName || isAuthPage || !Capacitor.isNativePlatform()) return;
     let listener: PluginListenerHandle | undefined;
     let cancelled = false;
-    WakeWord.addListener('wakeCommand', ({ command }) => { if (command) void answerRef.current(command); })
+    WakeWord.addListener('wakeCommand', ({ command }) => {
+      if (command === '__WAKE__') { setOpen(true); reply('Dime, ¿qué deseas?'); return; }
+      if (command) void answerRef.current(command);
+    })
       .then((handle) => { if (cancelled) void handle.remove(); else listener = handle; });
     WakeWord.start({ name: assistantName }).then(() => setHandsFree(true)).catch((error) => {
       setHandsFree(false);
       setResponse(error instanceof Error ? error.message : 'Activa el permiso de micrófono para usar “Ey ' + assistantName + '”.');
     });
     return () => { cancelled = true; void listener?.remove(); };
-  }, [assistantName, isAuthPage]);
+  }, [assistantName, isAuthPage, reply]);
 
   const confirm = async () => { if (!proposal) return; setWorking(true); try { const result = await executeAssistantOperation(proposal.operation); await fetchReservations(); let message = `Operación completada para ${result.reservation_number}.`; if (proposal.prepayment) { const payment = await createPrepaymentSession(result.id, window.location.origin); if (!payment.success || !payment.url) { setProposal(null); reply(`El anticipo quedó configurado, pero Stripe no generó el enlace: ${payment.error || 'error desconocido'}. Reinténtalo desde la reserva.`); return; } await navigator.clipboard?.writeText(payment.url); message += ' El enlace de Stripe se ha copiado al portapapeles.'; } setProposal(null); reply(message); } catch (error) { reply(error instanceof Error ? `No se realizó la operación: ${error.message}` : 'No se realizó la operación.'); } finally { setWorking(false); } };
   const startListening = useCallback(() => { const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition; if (!Ctor) { setOpen(true); reply('El reconocimiento de voz no está disponible. Escribe la orden.'); return; } const recognition = new Ctor(); recognition.lang = 'es-ES'; recognition.interimResults = false; recognition.continuous = false; recognition.onresult = (e) => { setTranscript(e.results[0][0].transcript); setOpen(true); }; recognition.onend = () => setListening(false); recognition.onerror = () => { setListening(false); reply('No he podido escuchar la orden. Puedes escribirla.'); }; recognitionRef.current = recognition; recognition.start(); setListening(true); setOpen(true); }, [reply]);
