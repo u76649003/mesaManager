@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:assistant": "node --experimental-strip-types --test src/lib/assistant/intents.test.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",

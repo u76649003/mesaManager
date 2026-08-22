@@ -28,6 +28,8 @@ export interface Tenant {
   default_reservation_duration: number;
   grace_period_minutes: number;
   max_party_size: number;
+  assistant_name?: string;
+  assistant_enabled?: boolean;
   created_at: string;
 }
 
