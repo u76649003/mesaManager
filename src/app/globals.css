@@ -235,3 +235,9 @@ body.force-mobile .dashboard-split {
   height: 100% !important;
 }
 
+/* Keep the voice assistant above the mobile navigation and safe area. */
+div:has(> button[aria-label="Hablar"]) {
+  z-index: 9999 !important;
+  right: 1rem !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5.25rem) !important;
+}
