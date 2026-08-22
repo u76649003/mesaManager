@@ -6,6 +6,7 @@ import { Check, Mic, MicOff, Pencil, Send, Sparkles, Volume2, X } from 'lucide-r
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { createClient } from '@/lib/supabase/client';
 import { createPrepaymentSession } from '@/app/actions/payments';
+import { sendAssistantPaymentRequest } from '@/app/actions/emails';
 import { parseAssistantIntent, type AssistantMutationIntent } from '@/lib/assistant/intents';
 import {
   executeAssistantOperation, loadAssistantConfiguration, resolveReservation,
@@ -19,7 +20,7 @@ type RecognitionEvent = { results: ArrayLike<{ 0: { transcript: string } }> };
 type Recognition = { lang: string; interimResults: boolean; continuous: boolean; start: () => void; stop: () => void; onresult: ((e: RecognitionEvent) => void) | null; onend: (() => void) | null; onerror: (() => void) | null };
 declare global { interface Window { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition } }
 
-type PendingProposal = { summary: string; operation: AssistantOperation; prepayment?: boolean };
+type PendingProposal = { summary: string; operation: AssistantOperation; prepayment?: boolean; paymentRequest?: 'online' | 'bizum' };
 type ReservationDraft = { tableLabel?: string; guestName?: string; date?: string; time?: string; partySize?: number };
 type Conversation = { kind: 'free_tables_room' } | { kind: 'reservation'; draft: ReservationDraft } | { kind: 'seat_reference' };
 type WakeWordPluginApi = {
@@ -67,15 +68,20 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   useEffect(() => { if (isAuthPage) return; loadAssistantConfiguration().then((config) => {
     if (config) { setAssistantName(config.assistant_enabled ? config.assistant_name ?? '' : ''); setDraftName(config.assistant_name ?? ''); setTenantId(config.tenantId); setCanConfigure(config.canConfigure); }
   }).catch(() => setResponse('No se pudo cargar la configuración del asistente.')).finally(() => setReady(true)); }, [isAuthPage]);
+  useEffect(() => { const changed = (event: Event) => setAssistantName((event as CustomEvent<string>).detail); window.addEventListener('assistant-name-changed', changed); return () => window.removeEventListener('assistant-name-changed', changed); }, []);
   const speechSupported = useMemo(() => typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition), []);
   const speak = useCallback((text: string) => { if (Capacitor.isNativePlatform()) { void WakeWord.speak({ text, expectReply: true }); return; } if (!('speechSynthesis' in window)) return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'es-ES'; window.speechSynthesis.speak(u); }, []);
   const reply = useCallback((message: string) => { setResponse(message); speak(message); }, [speak]);
 
-  const buildProposal = useCallback(async (intent: AssistantMutationIntent) => {
+  const buildProposal = useCallback(async (intent: AssistantMutationIntent): Promise<PendingProposal> => {
     if (intent.action === 'create_reservation') {
       return { summary: `Crear reserva para ${intent.guestName}, ${intent.partySize} personas, el ${intent.date} a las ${intent.time}. La mesa se asignará de forma segura al confirmar.`, operation: { action: intent.action, guest_name: intent.guestName, party_size: intent.partySize, date: intent.date, time: intent.time, duration_minutes: intent.durationMinutes } };
     }
     const reservation = await resolveReservation(intent.reference);
+    if (intent.action === 'send_payment_request') {
+      if (!reservation.guest_email) throw new Error(`${reservation.reservation_number} no tiene correo del cliente.`);
+      return { summary: `Enviar a ${reservation.guest_email} una solicitud de ${intent.amount.toFixed(2)} € por ${intent.method === 'bizum' ? 'Bizum' : 'pasarela de pago'} para ${reservation.reservation_number}.`, operation: { action: 'require_prepayment', reservation_id: reservation.id, amount: intent.amount }, paymentRequest: intent.method };
+    }
     if (intent.action === 'seat_reservation') return { summary: `Sentar la reserva ${reservation.reservation_number}, de ${reservation.guest_name}. La mesa quedará marcada como ocupada.`, operation: { action: intent.action, reservation_id: reservation.id } };
     if (intent.action === 'cancel_reservation') return { summary: `Cancelar ${reservation.reservation_number}, de ${reservation.guest_name}, el ${reservation.date} a las ${reservation.time.slice(0, 5)}.`, operation: { action: intent.action, reservation_id: reservation.id } };
     if (intent.action === 'require_prepayment') return { summary: `Solicitar un anticipo de ${intent.amount.toFixed(2)} € para ${reservation.reservation_number}. Stripe generará un enlace de pago; no se capturarán tarjetas aquí.`, operation: { action: intent.action, reservation_id: reservation.id, amount: intent.amount }, prepayment: true };
@@ -163,7 +169,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     return () => { cancelled = true; void listener?.remove(); };
   }, [assistantName, isAuthPage, reply]);
 
-  const confirm = async () => { if (!proposal) return; setWorking(true); try { const result = await executeAssistantOperation(proposal.operation); await fetchReservations(); let message = `Operación completada para ${result.reservation_number}.`; if (proposal.prepayment) { const payment = await createPrepaymentSession(result.id, window.location.origin); if (!payment.success || !payment.url) { setProposal(null); reply(`El anticipo quedó configurado, pero Stripe no generó el enlace: ${payment.error || 'error desconocido'}. Reinténtalo desde la reserva.`); return; } await navigator.clipboard?.writeText(payment.url); message += ' El enlace de Stripe se ha copiado al portapapeles.'; } setProposal(null); reply(message); } catch (error) { reply(error instanceof Error ? `No se realizó la operación: ${error.message}` : 'No se realizó la operación.'); } finally { setWorking(false); } };
+  const confirm = async () => { if (!proposal) return; setWorking(true); try { const result = await executeAssistantOperation(proposal.operation); await fetchReservations(); let message = `Operación completada para ${result.reservation_number}.`; if (proposal.paymentRequest) { const sent = await sendAssistantPaymentRequest(result.id, proposal.paymentRequest, Number(proposal.operation.amount), window.location.origin); if (!sent?.success) { setProposal(null); reply(`El pago quedó pendiente, pero no se envió el correo: ${sent?.error || 'error desconocido'}.`); return; } message = `Correo de pago enviado correctamente para ${result.reservation_number}.`; } else if (proposal.prepayment) { const payment = await createPrepaymentSession(result.id, window.location.origin); if (!payment.success || !payment.url) { setProposal(null); reply(`El anticipo quedó configurado, pero Stripe no generó el enlace: ${payment.error || 'error desconocido'}. Reinténtalo desde la reserva.`); return; } await navigator.clipboard?.writeText(payment.url); message += ' El enlace de Stripe se ha copiado al portapapeles.'; } setProposal(null); reply(message); } catch (error) { reply(error instanceof Error ? `No se realizó la operación: ${error.message}` : 'No se realizó la operación.'); } finally { setWorking(false); } };
   const startListening = useCallback(() => { const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition; if (!Ctor) { setOpen(true); reply('El reconocimiento de voz no está disponible. Escribe la orden.'); return; } const recognition = new Ctor(); recognition.lang = 'es-ES'; recognition.interimResults = false; recognition.continuous = false; recognition.onresult = (e) => { setTranscript(e.results[0][0].transcript); setOpen(true); }; recognition.onend = () => setListening(false); recognition.onerror = () => { setListening(false); reply('No he podido escuchar la orden. Puedes escribirla.'); }; recognitionRef.current = recognition; recognition.start(); setListening(true); setOpen(true); }, [reply]);
   const saveName = async () => { const clean = draftName.trim().slice(0, 24); if (!clean || !tenantId || !canConfigure) return; setWorking(true); try { await saveAssistantConfiguration(tenantId, clean); setAssistantName(clean); } catch { setResponse('Solo propietario o encargado puede cambiar este nombre.'); } finally { setWorking(false); } };
   const toggleHandsFree = async () => { try { if (handsFree) { await WakeWord.stop(); setHandsFree(false); } else { await WakeWord.start({ name: assistantName }); setHandsFree(true); } } catch { reply('No se pudo cambiar la escucha continua. Revisa el permiso de micrófono.'); } };
