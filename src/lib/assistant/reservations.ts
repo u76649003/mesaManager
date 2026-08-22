@@ -8,7 +8,7 @@ export async function resolveReservation(reference: string) {
   const normalized = reference.toUpperCase();
   const { data, error } = await supabase
     .from('reservations')
-    .select('id, reservation_number, guest_name, date, time, party_size, status, prepayment_amount, payment_status')
+    .select('id, tenant_id, reservation_number, guest_name, guest_email, date, time, party_size, status, prepayment_amount, payment_status, payment_method, bizum_phone, bizum_name')
     .eq('reservation_number', normalized)
     .maybeSingle();
   if (error) throw error;

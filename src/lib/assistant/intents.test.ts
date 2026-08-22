@@ -34,6 +34,12 @@ test('seats only an exact reservation reference', () => {
   assert.deepEqual(parseAssistantIntent('Sienta la reserva RES-2026-000123'), { action: 'seat_reservation', reference: 'RES-2026-000123' });
 });
 
+test('prepares a Bizum email request with explicit amount and reservation', () => {
+  assert.deepEqual(parseAssistantIntent('Informa la reserva RES-2026-000123 por Bizum de 35 euros'), {
+    action: 'send_payment_request', reference: 'RES-2026-000123', method: 'bizum', amount: 35,
+  });
+});
+
 test('understands today reservations by voice', () => {
   assert.deepEqual(parseAssistantIntent('qué reservas tengo hoy'), { action: 'list_today_reservations' });
 });

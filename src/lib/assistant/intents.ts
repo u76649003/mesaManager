@@ -27,10 +27,11 @@ export const assistantIntentSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('cancel_reservation'), reference: z.string().min(1) }),
   z.object({ action: z.literal('seat_reservation'), reference: z.string().min(1) }),
   z.object({ action: z.literal('require_prepayment'), reference: z.string().min(1), amount: z.number().positive() }),
+  z.object({ action: z.literal('send_payment_request'), reference: z.string().min(1), method: z.enum(['online', 'bizum']), amount: z.number().positive() }),
 ]);
 
 export type AssistantIntent = z.infer<typeof assistantIntentSchema>;
-export type AssistantMutationIntent = Extract<AssistantIntent, { action: 'create_reservation' | 'update_reservation' | 'cancel_reservation' | 'seat_reservation' | 'require_prepayment' }>;
+export type AssistantMutationIntent = Extract<AssistantIntent, { action: 'create_reservation' | 'update_reservation' | 'cancel_reservation' | 'seat_reservation' | 'require_prepayment' | 'send_payment_request' }>;
 
 const numberWords: Record<string, number> = {
   uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
@@ -91,6 +92,10 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   if (reservationReference && /(anticipo|depósito|deposito|garantía|garantia)/.test(text)) {
     const amountMatch = text.match(/(?:anticipo|depósito|deposito|garantía|garantia)(?:\s+de)?\s+(\d+(?:[.,]\d{1,2})?)/);
     if (amountMatch) return assistantIntentSchema.parse({ action: 'require_prepayment', reference: reservationReference, amount: Number(amountMatch[1].replace(',', '.')) });
+  }
+  if (reservationReference && /(informa|informar|env[ií]a|enviar|solicita|solicitar|cobra|cobrar)/.test(text) && /(bizum|pasarela|tarjeta|pago)/.test(text)) {
+    const amountMatch = text.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:€|euros?)/);
+    if (amountMatch) return assistantIntentSchema.parse({ action: 'send_payment_request', reference: reservationReference, method: /bizum/.test(text) ? 'bizum' : 'online', amount: Number(amountMatch[1].replace(',', '.')) });
   }
   if (reservationReference && /(mueve|cambia|modifica|actualiza)/.test(text) && (date || time || partySize)) {
     return assistantIntentSchema.parse({ action: 'update_reservation', reference: reservationReference, date, time, partySize });
