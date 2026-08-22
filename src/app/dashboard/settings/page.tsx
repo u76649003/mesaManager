@@ -142,6 +142,9 @@ export default function SettingsPage() {
   const [stripePublishableKey, setStripePublishableKey] = useState('');
   const [emailProvider, setEmailProvider] = useState<'gmail' | 'custom'>('gmail');
   const [googleEmail, setGoogleEmail] = useState('');
+  const [assistantName, setAssistantName] = useState('');
+  const [bizumPhone, setBizumPhone] = useState('');
+  const [bizumName, setBizumName] = useState('');
 
   useEffect(() => {
     if (rooms && rooms.length > 0 && (!activeRoom || activeRoom.id === 'temp')) {
@@ -173,7 +176,7 @@ export default function SettingsPage() {
         setTenantId(profile.tenant_id);
         const { data: tenant } = await supabase
           .from('tenants')
-          .select('grace_period_minutes, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, stripe_secret_key, stripe_publishable_key, google_email')
+          .select('grace_period_minutes, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, stripe_secret_key, stripe_publishable_key, google_email, assistant_name, bizum_phone, bizum_name')
           .eq('id', profile.tenant_id)
           .single();
         if (tenant) {
@@ -186,6 +189,9 @@ export default function SettingsPage() {
           setStripeSecretKey(tenant.stripe_secret_key || '');
           setStripePublishableKey(tenant.stripe_publishable_key || '');
           setGoogleEmail(tenant.google_email || '');
+          setAssistantName(tenant.assistant_name || '');
+          setBizumPhone(tenant.bizum_phone || '');
+          setBizumName(tenant.bizum_name || '');
 
           if (tenant.smtp_host === 'smtp.gmail.com' || !tenant.smtp_host) {
             setEmailProvider('gmail');
@@ -252,6 +258,10 @@ export default function SettingsPage() {
         smtp_from: finalFrom || null,
         stripe_secret_key: stripeSecretKey || null,
         stripe_publishable_key: stripePublishableKey || null,
+        assistant_name: assistantName.trim() || null,
+        assistant_enabled: true,
+        bizum_phone: bizumPhone.trim() || null,
+        bizum_name: bizumName.trim() || null,
       })
       .eq('id', tenantId);
 
@@ -259,6 +269,7 @@ export default function SettingsPage() {
       toast.error('Error al guardar los ajustes: ' + error.message);
     } else {
       toast.success('Ajustes guardados correctamente');
+      if (assistantName.trim()) window.dispatchEvent(new CustomEvent('assistant-name-changed', { detail: assistantName.trim() }));
     }
   };
 
@@ -622,6 +633,22 @@ export default function SettingsPage() {
                           Guardar Ajustes
                         </button>
                       </div>
+                    </div>
+
+                    <div className="p-6 bg-white border-2 border-slate-200 rounded-3xl space-y-4 shadow-md">
+                      <div className="border-b border-slate-100 pb-3">
+                        <h3 className="font-extrabold text-sm text-slate-800 flex items-center gap-2"><span>🎙️</span> Asistente y Bizum</h3>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">Nombre del asistente</label>
+                        <input maxLength={24} value={assistantName} onChange={(e) => setAssistantName(e.target.value)} placeholder="Ej. Mara" className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-sm focus:border-blue-500" />
+                        <p className="text-[10px] text-slate-450 mt-2 font-bold">La frase de activación será “Ey {assistantName || 'nombre'}”.</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div><label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">Teléfono Bizum</label><input value={bizumPhone} onChange={(e) => setBizumPhone(e.target.value)} placeholder="600 000 000" className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-sm focus:border-blue-500" /></div>
+                        <div><label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">Beneficiario</label><input value={bizumName} onChange={(e) => setBizumName(e.target.value)} placeholder="Nombre del restaurante" className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-sm focus:border-blue-500" /></div>
+                      </div>
+                      <div className="flex justify-end pt-4 border-t border-slate-100"><button onClick={saveGeneralSettings} disabled={!assistantName.trim()} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl">Guardar asistente</button></div>
                     </div>
 
                     {/* SMTP Settings Card */}
