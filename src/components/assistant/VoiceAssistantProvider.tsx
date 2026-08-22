@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Check, Mic, MicOff, Pencil, Send, Sparkles, Volume2, X } from 'lucide-react';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { createPrepaymentSession } from '@/app/actions/payments';
 import { parseAssistantIntent, type AssistantMutationIntent } from '@/lib/assistant/intents';
 import {
@@ -18,6 +19,12 @@ type Recognition = { lang: string; interimResults: boolean; continuous: boolean;
 declare global { interface Window { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition } }
 
 type PendingProposal = { summary: string; operation: AssistantOperation; prepayment?: boolean };
+type WakeWordPluginApi = {
+  start(options: { name: string }): Promise<{ active: boolean }>;
+  stop(): Promise<{ active: boolean }>;
+  addListener(event: 'wakeCommand', listener: (data: { command: string }) => void): Promise<PluginListenerHandle>;
+};
+const WakeWord = registerPlugin<WakeWordPluginApi>('WakeWord');
 const capacity = (table: Table) => table.capacity ?? table.table_type?.capacity ?? 0;
 function overlaps(table: Table, reservations: Reservation[], date: string, time: string | null) {
   if (!time) return table.status !== 'available';
@@ -36,6 +43,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const selectedDate = useReservationStore((s) => s.selectedDate);
   const selectedTime = useReservationStore((s) => s.selectedTime);
   const recognitionRef = useRef<Recognition | null>(null);
+  const answerRef = useRef<(spokenText?: string) => Promise<void>>(async () => {});
   const [assistantName, setAssistantName] = useState('');
   const [draftName, setDraftName] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -47,6 +55,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [proposal, setProposal] = useState<PendingProposal | null>(null);
+  const [handsFree, setHandsFree] = useState(false);
 
   useEffect(() => { if (isAuthPage) return; loadAssistantConfiguration().then((config) => {
     if (config) { setAssistantName(config.assistant_enabled ? config.assistant_name ?? '' : ''); setDraftName(config.assistant_name ?? ''); setTenantId(config.tenantId); setCanConfigure(config.canConfigure); }
@@ -65,21 +74,38 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     return { summary: `Modificar ${reservation.reservation_number}: ${intent.date ? `fecha ${intent.date}; ` : ''}${intent.time ? `hora ${intent.time}; ` : ''}${intent.partySize ? `${intent.partySize} personas; ` : ''}la asignación se recalculará al confirmar.`, operation: { action: intent.action, reservation_id: reservation.id, date: intent.date, time: intent.time, party_size: intent.partySize } };
   }, []);
 
-  const answer = useCallback(async () => {
-    setProposal(null); const intent = parseAssistantIntent(transcript); let message = '';
+  const answer = useCallback(async (spokenText?: string) => {
+    const command = spokenText?.trim() || transcript.trim();
+    if (!command) return;
+    setTranscript(command); setOpen(true); setProposal(null); const intent = parseAssistantIntent(command); let message = '';
     if (intent.action === 'check_table') { const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === intent.tableLabel.toLocaleLowerCase('es-ES')); message = !table ? `No encuentro la mesa ${intent.tableLabel}.` : overlaps(table, reservations, selectedDate, selectedTime) ? `La mesa ${table.label} no está disponible en la selección actual.` : intent.partySize && capacity(table) < intent.partySize ? `Está libre, pero solo tiene capacidad para ${capacity(table)}.` : `Sí, la mesa ${table.label} está disponible.`; }
     else if (intent.action === 'recommend_table') { const best = tables.filter((t) => t.is_active && capacity(t) >= intent.partySize && !overlaps(t, reservations, selectedDate, selectedTime)).sort((a, b) => capacity(a) - capacity(b))[0]; message = best ? `La mejor opción visible es la mesa ${best.label}. La disponibilidad definitiva se valida al crear la reserva.` : `No veo una mesa individual libre para ${intent.partySize}.`; }
     else if (intent.action === 'help') message = 'Puedo consultar mesas o proponer crear, modificar, cancelar una reserva y solicitar un anticipo. Para cambios usa fecha ISO, hora y el número RES completo.';
     else { setWorking(true); try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' Revisa los datos y pulsa Confirmar.'; } catch (error) { message = error instanceof Error ? error.message : 'No pude preparar la operación.'; } finally { setWorking(false); } }
     reply(message);
   }, [buildProposal, reply, reservations, selectedDate, selectedTime, tables, transcript]);
+  useEffect(() => { answerRef.current = answer; }, [answer]);
+
+  useEffect(() => {
+    if (!assistantName || isAuthPage || !Capacitor.isNativePlatform()) return;
+    let listener: PluginListenerHandle | undefined;
+    let cancelled = false;
+    WakeWord.addListener('wakeCommand', ({ command }) => { if (command) void answerRef.current(command); })
+      .then((handle) => { if (cancelled) void handle.remove(); else listener = handle; });
+    WakeWord.start({ name: assistantName }).then(() => setHandsFree(true)).catch((error) => {
+      setHandsFree(false);
+      setResponse(error instanceof Error ? error.message : 'Activa el permiso de micrófono para usar “Ey ' + assistantName + '”.');
+    });
+    return () => { cancelled = true; void listener?.remove(); };
+  }, [assistantName, isAuthPage]);
 
   const confirm = async () => { if (!proposal) return; setWorking(true); try { const result = await executeAssistantOperation(proposal.operation); await fetchReservations(); let message = `Operación completada para ${result.reservation_number}.`; if (proposal.prepayment) { const payment = await createPrepaymentSession(result.id, window.location.origin); if (!payment.success || !payment.url) { setProposal(null); reply(`El anticipo quedó configurado, pero Stripe no generó el enlace: ${payment.error || 'error desconocido'}. Reinténtalo desde la reserva.`); return; } await navigator.clipboard?.writeText(payment.url); message += ' El enlace de Stripe se ha copiado al portapapeles.'; } setProposal(null); reply(message); } catch (error) { reply(error instanceof Error ? `No se realizó la operación: ${error.message}` : 'No se realizó la operación.'); } finally { setWorking(false); } };
   const startListening = useCallback(() => { const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition; if (!Ctor) { setOpen(true); reply('El reconocimiento de voz no está disponible. Escribe la orden.'); return; } const recognition = new Ctor(); recognition.lang = 'es-ES'; recognition.interimResults = false; recognition.continuous = false; recognition.onresult = (e) => { setTranscript(e.results[0][0].transcript); setOpen(true); }; recognition.onend = () => setListening(false); recognition.onerror = () => { setListening(false); reply('No he podido escuchar la orden. Puedes escribirla.'); }; recognitionRef.current = recognition; recognition.start(); setListening(true); setOpen(true); }, [reply]);
   const saveName = async () => { const clean = draftName.trim().slice(0, 24); if (!clean || !tenantId || !canConfigure) return; setWorking(true); try { await saveAssistantConfiguration(tenantId, clean); setAssistantName(clean); } catch { setResponse('Solo propietario o encargado puede cambiar este nombre.'); } finally { setWorking(false); } };
+  const toggleHandsFree = async () => { try { if (handsFree) { await WakeWord.stop(); setHandsFree(false); } else { await WakeWord.start({ name: assistantName }); setHandsFree(true); } } catch { reply('No se pudo cambiar la escucha continua. Revisa el permiso de micrófono.'); } };
 
   return <>{children}
     {ready && !isAuthPage && !assistantName && <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm"><div className="w-full max-w-md rounded-3xl border border-violet-400/20 bg-slate-900 p-6 shadow-2xl"><Sparkles className="mb-4 h-8 w-8 text-violet-400"/><h2 className="text-xl font-semibold text-white">Configura el asistente del restaurante</h2><p className="mt-2 text-sm text-slate-300">Este nombre será compartido por todo el equipo.</p><input autoFocus value={draftName} onChange={(e) => setDraftName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveName()} disabled={!canConfigure} placeholder={canConfigure ? 'Ej. Mara' : 'Pide al encargado que lo configure'} className="mt-5 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white"/><button onClick={saveName} disabled={!canConfigure || working} className="mt-4 w-full rounded-xl bg-violet-500 px-4 py-3 font-semibold text-white disabled:opacity-40">Guardar y activar</button>{response && <p className="mt-3 text-sm text-amber-300">{response}</p>}</div></div>}
-    {ready && !isAuthPage && assistantName && <div className="fixed bottom-5 right-5 z-[90] flex flex-col items-end gap-3">{open && <div className="w-[min(92vw,400px)] rounded-2xl border border-slate-700 bg-slate-900/95 p-4 text-white shadow-2xl"><div className="flex items-center justify-between"><div className="flex items-center gap-2 font-semibold"><Sparkles className="h-4 w-4 text-violet-400"/>{assistantName}</div><button aria-label="Cerrar" onClick={() => setOpen(false)}><X className="h-4 w-4"/></button></div><div className="mt-3 flex gap-2"><input value={transcript} onChange={(e) => setTranscript(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && transcript.trim() && answer()} placeholder="Da una orden…" className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm"/><button aria-label="Enviar" disabled={!transcript.trim() || working} onClick={answer} className="rounded-xl bg-violet-500 p-2 disabled:opacity-40"><Send className="h-4 w-4"/></button></div>{response && <p className="mt-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-200"><Volume2 className="mr-2 inline h-4 w-4"/>{response}</p>}{proposal && <div className="mt-3 flex gap-2"><button disabled={working} onClick={confirm} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold disabled:opacity-40"><Check className="h-4 w-4"/>Confirmar</button><button disabled={working} onClick={() => { setProposal(null); reply('Operación descartada.'); }} className="rounded-xl border border-slate-600 px-3 py-2 text-sm">Descartar</button></div>}<div className="mt-3 flex justify-between text-xs text-slate-400"><span>{speechSupported ? 'Micrófono disponible' : 'Modo texto'}</span>{canConfigure && <button onClick={() => { setDraftName(assistantName); setAssistantName(''); }} className="flex items-center gap-1"><Pencil className="h-3 w-3"/>Cambiar nombre</button>}</div></div>}<button aria-label="Hablar" onClick={() => listening ? recognitionRef.current?.stop() : startListening()} className={`grid h-14 w-14 place-items-center rounded-full text-white shadow-xl ${listening ? 'animate-pulse bg-red-500' : 'bg-violet-500'}`}>{listening ? <MicOff/> : <Mic/>}</button></div>}
+    {ready && !isAuthPage && assistantName && <div className="fixed bottom-5 right-5 z-[90] flex flex-col items-end gap-3">{open && <div className="w-[min(92vw,400px)] rounded-2xl border border-slate-700 bg-slate-900/95 p-4 text-white shadow-2xl"><div className="flex items-center justify-between"><div className="flex items-center gap-2 font-semibold"><Sparkles className="h-4 w-4 text-violet-400"/>{assistantName}</div><button aria-label="Cerrar" onClick={() => setOpen(false)}><X className="h-4 w-4"/></button></div><div className="mt-3 flex gap-2"><input value={transcript} onChange={(e) => setTranscript(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && transcript.trim() && answer()} placeholder="Da una orden…" className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm"/><button aria-label="Enviar" disabled={!transcript.trim() || working} onClick={() => void answer()} className="rounded-xl bg-violet-500 p-2 disabled:opacity-40"><Send className="h-4 w-4"/></button></div>{response && <p className="mt-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-200"><Volume2 className="mr-2 inline h-4 w-4"/>{response}</p>}{proposal && <div className="mt-3 flex gap-2"><button disabled={working} onClick={confirm} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold disabled:opacity-40"><Check className="h-4 w-4"/>Confirmar</button><button disabled={working} onClick={() => { setProposal(null); reply('Operación descartada.'); }} className="rounded-xl border border-slate-600 px-3 py-2 text-sm">Descartar</button></div>}<div className="mt-3 flex justify-between gap-3 text-xs text-slate-400"><span>{Capacitor.isNativePlatform() ? (handsFree ? `Di “Ey ${assistantName}”` : 'Escucha continua apagada') : (speechSupported ? 'Micrófono disponible' : 'Modo texto')}</span><div className="flex gap-3">{Capacitor.isNativePlatform() && <button onClick={toggleHandsFree}>{handsFree ? 'Desactivar escucha' : 'Activar escucha'}</button>}{canConfigure && <button onClick={() => { setDraftName(assistantName); setAssistantName(''); }} className="flex items-center gap-1"><Pencil className="h-3 w-3"/>Cambiar nombre</button>}</div></div></div>}<button aria-label="Hablar" onClick={() => listening ? recognitionRef.current?.stop() : startListening()} className={`grid h-14 w-14 place-items-center rounded-full text-white shadow-xl ${listening ? 'animate-pulse bg-red-500' : 'bg-violet-500'}`}>{listening ? <MicOff/> : <Mic/>}</button></div>}
   </>;
 }
