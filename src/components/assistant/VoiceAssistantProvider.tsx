@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Check, Mic, MicOff, Pencil, Send, Sparkles, Volume2, X } from 'lucide-react';
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { createClient } from '@/lib/supabase/client';
 import { createPrepaymentSession } from '@/app/actions/payments';
 import { parseAssistantIntent, type AssistantMutationIntent } from '@/lib/assistant/intents';
 import {
@@ -22,6 +23,7 @@ type PendingProposal = { summary: string; operation: AssistantOperation; prepaym
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
+  speak(options: { text: string; expectReply: boolean }): Promise<void>;
   addListener(event: 'wakeCommand', listener: (data: { command: string }) => void): Promise<PluginListenerHandle>;
 };
 const WakeWord = registerPlugin<WakeWordPluginApi>('WakeWord');
@@ -38,6 +40,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const isAuthPage = ['/login', '/register', '/payment'].some((path) => pathname.startsWith(path));
   const tables = useFloorStore((s) => s.tables);
+  const rooms = useFloorStore((s) => s.rooms);
   const reservations = useReservationStore((s) => s.reservations);
   const todayReservations = useReservationStore((s) => s.todayReservations);
   const fetchReservations = useReservationStore((s) => s.fetchReservations);
@@ -45,6 +48,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const selectedTime = useReservationStore((s) => s.selectedTime);
   const recognitionRef = useRef<Recognition | null>(null);
   const answerRef = useRef<(spokenText?: string) => Promise<void>>(async () => {});
+  const conversationRef = useRef<'free_tables_room' | null>(null);
   const [assistantName, setAssistantName] = useState('');
   const [draftName, setDraftName] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -62,7 +66,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     if (config) { setAssistantName(config.assistant_enabled ? config.assistant_name ?? '' : ''); setDraftName(config.assistant_name ?? ''); setTenantId(config.tenantId); setCanConfigure(config.canConfigure); }
   }).catch(() => setResponse('No se pudo cargar la configuración del asistente.')).finally(() => setReady(true)); }, [isAuthPage]);
   const speechSupported = useMemo(() => typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition), []);
-  const speak = useCallback((text: string) => { if (!('speechSynthesis' in window)) return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'es-ES'; window.speechSynthesis.speak(u); }, []);
+  const speak = useCallback((text: string) => { if (Capacitor.isNativePlatform()) { void WakeWord.speak({ text, expectReply: true }); return; } if (!('speechSynthesis' in window)) return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'es-ES'; window.speechSynthesis.speak(u); }, []);
   const reply = useCallback((message: string) => { setResponse(message); speak(message); }, [speak]);
 
   const buildProposal = useCallback(async (intent: AssistantMutationIntent) => {
@@ -78,15 +82,28 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const answer = useCallback(async (spokenText?: string) => {
     const command = spokenText?.trim() || transcript.trim();
     if (!command) return;
-    setTranscript(command); setOpen(true); setProposal(null); const intent = parseAssistantIntent(command); let message = '';
+    setTranscript(command); setOpen(true); setProposal(null); let message = '';
+    if (conversationRef.current === 'free_tables_room') {
+      const normalized = command.toLocaleLowerCase('es-ES');
+      const room = rooms.find((item) => normalized.includes(item.name.toLocaleLowerCase('es-ES')));
+      if (!room) { reply(`No reconozco ese salón. Puedes decir ${rooms.map((item) => item.name).join(' o ')}.`); return; }
+      const { data, error } = await createClient().from('tables').select('*, table_type:table_types(*)').eq('room_id', room.id).eq('is_active', true);
+      if (error) { reply('No he podido consultar las mesas de ese salón.'); return; }
+      conversationRef.current = null;
+      const roomTables = (data ?? []) as Table[];
+      const free = roomTables.filter((table) => !overlaps(table, reservations, selectedDate, selectedTime));
+      reply(free.length ? `En ${room.name} tienes ${free.length} mesas libres: ${free.map((table) => table.label).join(', ')}.` : `No tienes mesas libres en ${room.name}.`);
+      return;
+    }
+    const intent = parseAssistantIntent(command);
     if (intent.action === 'check_table') { const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === intent.tableLabel.toLocaleLowerCase('es-ES')); message = !table ? `No encuentro la mesa ${intent.tableLabel}.` : overlaps(table, reservations, selectedDate, selectedTime) ? `La mesa ${table.label} no está disponible en la selección actual.` : intent.partySize && capacity(table) < intent.partySize ? `Está libre, pero solo tiene capacidad para ${capacity(table)}.` : `Sí, la mesa ${table.label} está disponible.`; }
     else if (intent.action === 'recommend_table') { const best = tables.filter((t) => t.is_active && capacity(t) >= intent.partySize && !overlaps(t, reservations, selectedDate, selectedTime)).sort((a, b) => capacity(a) - capacity(b))[0]; message = best ? `La mejor opción visible es la mesa ${best.label}. La disponibilidad definitiva se valida al crear la reserva.` : `No veo una mesa individual libre para ${intent.partySize}.`; }
     else if (intent.action === 'list_today_reservations') { const active = todayReservations.filter((r) => !['cancelled', 'no_show'].includes(r.status)); message = active.length ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'}` : 'Hoy no tienes reservas activas.'; }
-    else if (intent.action === 'list_free_tables') { const free = tables.filter((t) => t.is_active && !overlaps(t, reservations, selectedDate, selectedTime)); message = free.length ? `Tienes ${free.length} mesas libres: ${free.slice(0, 10).map((t) => t.label).join(', ')}${free.length > 10 ? ` y ${free.length - 10} más` : ''}.` : 'No veo mesas libres en este momento.'; }
+    else if (intent.action === 'list_free_tables') { if (rooms.length > 1) { conversationRef.current = 'free_tables_room'; message = `¿En qué salón? Puedes decir ${rooms.map((room) => room.name).join(', ')}.`; } else { const free = tables.filter((t) => t.is_active && !overlaps(t, reservations, selectedDate, selectedTime)); message = free.length ? `Tienes ${free.length} mesas libres: ${free.slice(0, 10).map((t) => t.label).join(', ')}${free.length > 10 ? ` y ${free.length - 10} más` : ''}.` : 'No veo mesas libres en este momento.'; } }
     else if (intent.action === 'help') message = 'Puedo decirte las reservas de hoy, qué mesas están libres, recomendar una mesa o proponer crear, modificar y cancelar reservas.';
     else { setWorking(true); try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' Revisa los datos y pulsa Confirmar.'; } catch (error) { message = error instanceof Error ? error.message : 'No pude preparar la operación.'; } finally { setWorking(false); } }
     reply(message);
-  }, [buildProposal, reply, reservations, selectedDate, selectedTime, tables, todayReservations, transcript]);
+  }, [buildProposal, reply, reservations, rooms, selectedDate, selectedTime, tables, todayReservations, transcript]);
   useEffect(() => { answerRef.current = answer; }, [answer]);
 
   useEffect(() => {
