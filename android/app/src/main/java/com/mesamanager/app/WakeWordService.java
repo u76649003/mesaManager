@@ -30,8 +30,10 @@ public class WakeWordService extends Service implements RecognitionListener {
     private String wakePhrase = "ey mara";
     private boolean awaitingCommand = false;
     private boolean stopping = false;
+    private boolean wakeAcknowledged = false;
     private String lastCommand = "";
     private long lastCommandAt = 0;
+    private long promptPauseUntil = 0;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -69,20 +71,32 @@ public class WakeWordService extends Service implements RecognitionListener {
     }
 
     private void restart() {
-        if (!stopping) new android.os.Handler(getMainLooper()).postDelayed(this::startListening, 650);
+        if (!stopping) {
+            long delay = Math.max(650, promptPauseUntil - System.currentTimeMillis());
+            new android.os.Handler(getMainLooper()).postDelayed(this::startListening, delay);
+        }
     }
 
-    private void consume(Bundle results) {
+    private void consume(Bundle results, boolean isFinal) {
         ArrayList<String> phrases = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         if (phrases == null) return;
         for (String original : phrases) {
             String phrase = normalize(original);
-            if (awaitingCommand && !phrase.isBlank()) { awaitingCommand = false; emit(original.trim()); return; }
+            if (awaitingCommand && !phrase.isBlank()) {
+                int wakeIndex = phrase.indexOf(wakePhrase);
+                String command = wakeIndex >= 0 ? phrase.substring(wakeIndex + wakePhrase.length()).trim() : original.trim();
+                if (!command.isEmpty() && isFinal) { awaitingCommand = false; wakeAcknowledged = false; emit(command); }
+                return;
+            }
             int index = phrase.indexOf(wakePhrase);
             if (index >= 0) {
                 String remainder = phrase.substring(index + wakePhrase.length()).trim();
-                if (remainder.isEmpty()) { awaitingCommand = true; updateNotification("Te escucho…"); }
-                else emit(remainder);
+                if (!wakeAcknowledged) {
+                    wakeAcknowledged = true; awaitingCommand = true; promptPauseUntil = System.currentTimeMillis() + 1700;
+                    emit("__WAKE__"); updateNotification("Te escucho…");
+                    if (recognizer != null) recognizer.cancel();
+                }
+                if (!remainder.isEmpty() && isFinal) { awaitingCommand = false; wakeAcknowledged = false; emit(remainder); }
                 return;
             }
         }
@@ -121,8 +135,8 @@ public class WakeWordService extends Service implements RecognitionListener {
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
     }
 
-    @Override public void onResults(Bundle results) { consume(results); restart(); }
-    @Override public void onPartialResults(Bundle partialResults) { consume(partialResults); }
+    @Override public void onResults(Bundle results) { consume(results, true); restart(); }
+    @Override public void onPartialResults(Bundle partialResults) { consume(partialResults, false); }
     @Override public void onError(int error) { restart(); }
     @Override public void onReadyForSpeech(Bundle params) {}
     @Override public void onBeginningOfSpeech() {}
