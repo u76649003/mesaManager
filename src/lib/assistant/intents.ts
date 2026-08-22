@@ -11,6 +11,8 @@ export const assistantIntentSchema = z.discriminatedUnion('action', [
     partySize: z.number().int().positive(),
   }),
   z.object({ action: z.literal('help') }),
+  z.object({ action: z.literal('list_today_reservations') }),
+  z.object({ action: z.literal('list_free_tables') }),
   z.object({
     action: z.literal('create_reservation'), guestName: z.string().min(1), date: z.iso.date(),
     time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), partySize: z.number().int().positive(),
@@ -49,6 +51,13 @@ export function parseAssistantIntent(raw: string): AssistantIntent {
   const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
   const date = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1];
   const time = text.match(/\b([01]\d|2[0-3]):([0-5]\d)\b/)?.[0];
+
+  if (/(qu[eé]\s+)?reservas?.*(hoy|esta noche)|reservas?\s+(de\s+)?hoy/.test(text)) {
+    return { action: 'list_today_reservations' };
+  }
+  if (/(qu[eé]\s+)?mesas?.*(libres?|disponibles?)|(libres?|disponibles?).*mesas?/.test(text)) {
+    return { action: 'list_free_tables' };
+  }
 
   if (reservationReference && /(cancela|cancelar|anula|anular)/.test(text)) {
     return assistantIntentSchema.parse({ action: 'cancel_reservation', reference: reservationReference });

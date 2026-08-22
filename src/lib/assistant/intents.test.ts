@@ -23,3 +23,11 @@ test('parses a prepayment amount and keeps it as a proposal', () => {
 test('does not turn an incomplete mutation into an executable intent', () => {
   assert.deepEqual(parseAssistantIntent('Crea una reserva para Laura mañana'), { action: 'help' });
 });
+
+test('understands today reservations by voice', () => {
+  assert.deepEqual(parseAssistantIntent('qué reservas tengo hoy'), { action: 'list_today_reservations' });
+});
+
+test('understands free tables by voice', () => {
+  assert.deepEqual(parseAssistantIntent('dime qué mesas tengo libres'), { action: 'list_free_tables' });
+});
