@@ -20,6 +20,8 @@ type Recognition = { lang: string; interimResults: boolean; continuous: boolean;
 declare global { interface Window { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition } }
 
 type PendingProposal = { summary: string; operation: AssistantOperation; prepayment?: boolean };
+type ReservationDraft = { tableLabel?: string; guestName?: string; date?: string; time?: string; partySize?: number };
+type Conversation = { kind: 'free_tables_room' } | { kind: 'reservation'; draft: ReservationDraft } | { kind: 'seat_reference' };
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
@@ -48,7 +50,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const selectedTime = useReservationStore((s) => s.selectedTime);
   const recognitionRef = useRef<Recognition | null>(null);
   const answerRef = useRef<(spokenText?: string) => Promise<void>>(async () => {});
-  const conversationRef = useRef<'free_tables_room' | null>(null);
+  const conversationRef = useRef<Conversation | null>(null);
   const [assistantName, setAssistantName] = useState('');
   const [draftName, setDraftName] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -74,6 +76,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       return { summary: `Crear reserva para ${intent.guestName}, ${intent.partySize} personas, el ${intent.date} a las ${intent.time}. La mesa se asignará de forma segura al confirmar.`, operation: { action: intent.action, guest_name: intent.guestName, party_size: intent.partySize, date: intent.date, time: intent.time, duration_minutes: intent.durationMinutes } };
     }
     const reservation = await resolveReservation(intent.reference);
+    if (intent.action === 'seat_reservation') return { summary: `Sentar la reserva ${reservation.reservation_number}, de ${reservation.guest_name}. La mesa quedará marcada como ocupada.`, operation: { action: intent.action, reservation_id: reservation.id } };
     if (intent.action === 'cancel_reservation') return { summary: `Cancelar ${reservation.reservation_number}, de ${reservation.guest_name}, el ${reservation.date} a las ${reservation.time.slice(0, 5)}.`, operation: { action: intent.action, reservation_id: reservation.id } };
     if (intent.action === 'require_prepayment') return { summary: `Solicitar un anticipo de ${intent.amount.toFixed(2)} € para ${reservation.reservation_number}. Stripe generará un enlace de pago; no se capturarán tarjetas aquí.`, operation: { action: intent.action, reservation_id: reservation.id, amount: intent.amount }, prepayment: true };
     return { summary: `Modificar ${reservation.reservation_number}: ${intent.date ? `fecha ${intent.date}; ` : ''}${intent.time ? `hora ${intent.time}; ` : ''}${intent.partySize ? `${intent.partySize} personas; ` : ''}la asignación se recalculará al confirmar.`, operation: { action: intent.action, reservation_id: reservation.id, date: intent.date, time: intent.time, party_size: intent.partySize } };
@@ -83,7 +86,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     const command = spokenText?.trim() || transcript.trim();
     if (!command) return;
     setTranscript(command); setOpen(true); setProposal(null); let message = '';
-    if (conversationRef.current === 'free_tables_room') {
+    if (conversationRef.current?.kind === 'free_tables_room') {
       const normalized = command.toLocaleLowerCase('es-ES');
       const room = rooms.find((item) => normalized.includes(item.name.toLocaleLowerCase('es-ES')));
       if (!room) { reply(`No reconozco ese salón. Puedes decir ${rooms.map((item) => item.name).join(' o ')}.`); return; }
@@ -95,11 +98,45 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       reply(free.length ? `En ${room.name} tienes ${free.length} mesas libres: ${free.map((table) => table.label).join(', ')}.` : `No tienes mesas libres en ${room.name}.`);
       return;
     }
+    if (conversationRef.current?.kind === 'seat_reference') {
+      const reference = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
+      if (!reference) { reply('Dime el número completo de reserva, por ejemplo RES-2026-000123.'); return; }
+      conversationRef.current = null; setWorking(true);
+      try { const next = await buildProposal({ action: 'seat_reservation', reference: reference.toUpperCase() }); setProposal(next); reply(next.summary + ' ¿Lo confirmas?'); }
+      catch (error) { reply(error instanceof Error ? error.message : 'No pude localizar esa reserva.'); }
+      finally { setWorking(false); }
+      return;
+    }
+    if (conversationRef.current?.kind === 'reservation') {
+      const draft = conversationRef.current.draft;
+      const parsed = parseAssistantIntent(command);
+      if (parsed.action === 'draft_reservation') Object.assign(draft, Object.fromEntries(Object.entries(parsed).filter(([key, value]) => key !== 'action' && value !== undefined)));
+      else if (!draft.guestName) draft.guestName = command.replace(/^(a nombre de|nombre)\s+/i, '').trim();
+      const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : !draft.guestName ? '¿A nombre de quién?' : null;
+      if (missing) { reply(missing); return; }
+      const table = tables.find((item) => item.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
+      if (!table) { const missingLabel = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${missingLabel}. ¿Qué mesa quieres reservar?`); return; }
+      setWorking(true);
+      try {
+        const { data, error } = await createClient().rpc('assistant_table_candidates', { p_date: draft.date, p_time: draft.time, p_party_size: draft.partySize, p_duration_minutes: 90, p_room_id: null, p_exclude_reservation_id: null });
+        if (error) throw error;
+        const candidates = (data ?? []) as Array<{ allocation_type: string; allocation_id: string; label: string }>;
+        const requested = candidates.find((item) => item.allocation_type === 'table' && item.allocation_id === table.id);
+        if (!requested) { const alternative = candidates[0]; conversationRef.current = null; reply(alternative ? `La mesa ${table.label} no está disponible o no tiene capacidad. Sí está disponible ${alternative.label}. Puedes pedirme reservar esa mesa.` : `La mesa ${table.label} no está disponible y no encuentro una alternativa válida.`); return; }
+        const next = { summary: `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}.`, operation: { action: 'create_reservation' as const, guest_name: draft.guestName, party_size: draft.partySize, date: draft.date, time: draft.time, duration_minutes: 90, table_id: table.id } };
+        conversationRef.current = null; setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+      } catch { reply('No he podido comprobar la disponibilidad ahora mismo.'); }
+      finally { setWorking(false); }
+      return;
+    }
     const intent = parseAssistantIntent(command);
     if (intent.action === 'check_table') { const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === intent.tableLabel.toLocaleLowerCase('es-ES')); message = !table ? `No encuentro la mesa ${intent.tableLabel}.` : overlaps(table, reservations, selectedDate, selectedTime) ? `La mesa ${table.label} no está disponible en la selección actual.` : intent.partySize && capacity(table) < intent.partySize ? `Está libre, pero solo tiene capacidad para ${capacity(table)}.` : `Sí, la mesa ${table.label} está disponible.`; }
     else if (intent.action === 'recommend_table') { const best = tables.filter((t) => t.is_active && capacity(t) >= intent.partySize && !overlaps(t, reservations, selectedDate, selectedTime)).sort((a, b) => capacity(a) - capacity(b))[0]; message = best ? `La mejor opción visible es la mesa ${best.label}. La disponibilidad definitiva se valida al crear la reserva.` : `No veo una mesa individual libre para ${intent.partySize}.`; }
     else if (intent.action === 'list_today_reservations') { const active = todayReservations.filter((r) => !['cancelled', 'no_show'].includes(r.status)); message = active.length ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'}` : 'Hoy no tienes reservas activas.'; }
-    else if (intent.action === 'list_free_tables') { if (rooms.length > 1) { conversationRef.current = 'free_tables_room'; message = `¿En qué salón? Puedes decir ${rooms.map((room) => room.name).join(', ')}.`; } else { const free = tables.filter((t) => t.is_active && !overlaps(t, reservations, selectedDate, selectedTime)); message = free.length ? `Tienes ${free.length} mesas libres: ${free.slice(0, 10).map((t) => t.label).join(', ')}${free.length > 10 ? ` y ${free.length - 10} más` : ''}.` : 'No veo mesas libres en este momento.'; } }
+    else if (intent.action === 'list_reservations_date') { setWorking(true); try { const { data, error } = await createClient().from('reservations').select('guest_name, party_size, time, status, table:tables(label)').eq('date', intent.date).not('status', 'in', '(cancelled,no_show)').order('time'); if (error) throw error; const rows = (data ?? []) as unknown as Array<{ guest_name: string; party_size: number; time: string; table?: { label: string } | null }>; message = rows.length ? `El ${intent.date} tienes ${rows.length} reservas. ${rows.slice(0, 10).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}.` : `El ${intent.date} no tienes reservas activas.`; } catch { message = 'No he podido consultar las reservas de ese día.'; } finally { setWorking(false); } }
+    else if (intent.action === 'list_free_tables') { if (rooms.length > 1) { conversationRef.current = { kind: 'free_tables_room' }; message = `¿En qué salón? Puedes decir ${rooms.map((room) => room.name).join(', ')}.`; } else { const free = tables.filter((t) => t.is_active && !overlaps(t, reservations, selectedDate, selectedTime)); message = free.length ? `Tienes ${free.length} mesas libres: ${free.slice(0, 10).map((t) => t.label).join(', ')}${free.length > 10 ? ` y ${free.length - 10} más` : ''}.` : 'No veo mesas libres en este momento.'; } }
+    else if (intent.action === 'draft_reservation') { conversationRef.current = { kind: 'reservation', draft: { tableLabel: intent.tableLabel, guestName: intent.guestName, date: intent.date, time: intent.time, partySize: intent.partySize } }; const draft = conversationRef.current.draft; if (draft.tableLabel && draft.partySize && draft.date && draft.time && draft.guestName) { void answerRef.current(command); return; } message = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : '¿A nombre de quién?'; }
+    else if (intent.action === 'help' && /(sienta|sentar|acomoda)/i.test(command)) { conversationRef.current = { kind: 'seat_reference' }; message = 'Claro. Dime el número completo de la reserva que quieres sentar.'; }
     else if (intent.action === 'help') message = 'Puedo decirte las reservas de hoy, qué mesas están libres, recomendar una mesa o proponer crear, modificar y cancelar reservas.';
     else { setWorking(true); try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' Revisa los datos y pulsa Confirmar.'; } catch (error) { message = error instanceof Error ? error.message : 'No pude preparar la operación.'; } finally { setWorking(false); } }
     reply(message);
