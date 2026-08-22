@@ -111,6 +111,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       const draft = conversationRef.current.draft;
       const parsed = parseAssistantIntent(command);
       if (parsed.action === 'draft_reservation') Object.assign(draft, Object.fromEntries(Object.entries(parsed).filter(([key, value]) => key !== 'action' && value !== undefined)));
+      else if (!draft.tableLabel) draft.tableLabel = command.replace(/^mesa\s+/i, '').trim();
+      else if (!draft.partySize) { const follow = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${command}`); if (follow.action === 'draft_reservation') draft.partySize = follow.partySize; }
+      else if (!draft.date) { const follow = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${command}`); if (follow.action === 'draft_reservation') draft.date = follow.date; }
+      else if (!draft.time) { const follow = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${draft.date} a las ${command}`); if (follow.action === 'draft_reservation') draft.time = follow.time; }
       else if (!draft.guestName) draft.guestName = command.replace(/^(a nombre de|nombre)\s+/i, '').trim();
       const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : !draft.guestName ? '¿A nombre de quién?' : null;
       if (missing) { reply(missing); return; }
