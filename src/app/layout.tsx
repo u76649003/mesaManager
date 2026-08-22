@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Toaster } from 'sonner';
+import { VoiceAssistantProvider } from '@/components/assistant/VoiceAssistantProvider';
 
 export const metadata: Metadata = {
   title: 'MesaManager — Gestión de Sala',
@@ -26,7 +27,7 @@ export default function RootLayout({
   return (
     <html lang="es" className="dark">
       <body className="antialiased">
-        {children}
+        <VoiceAssistantProvider>{children}</VoiceAssistantProvider>
         <Toaster
           position="top-right"
           theme="dark"
