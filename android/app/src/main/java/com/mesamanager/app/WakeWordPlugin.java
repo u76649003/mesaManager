@@ -37,6 +37,7 @@ public class WakeWordPlugin extends Plugin {
 
     @Override protected void handleOnDestroy() {
         try { getContext().unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) {}
+        getContext().stopService(new Intent(getContext(), WakeWordService.class));
     }
 
     @PluginMethod

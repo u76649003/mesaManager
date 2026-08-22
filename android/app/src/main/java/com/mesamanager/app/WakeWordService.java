@@ -197,5 +197,6 @@ public class WakeWordService extends Service implements RecognitionListener {
     @Override public void onEndOfSpeech() {}
     @Override public void onEvent(int eventType, Bundle params) {}
     @Override public IBinder onBind(Intent intent) { return null; }
+    @Override public void onTaskRemoved(Intent rootIntent) { stopping = true; stopListening(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); super.onTaskRemoved(rootIntent); }
     @Override public void onDestroy() { stopping = true; stopListening(); if (tts != null) { tts.stop(); tts.shutdown(); } super.onDestroy(); }
 }
