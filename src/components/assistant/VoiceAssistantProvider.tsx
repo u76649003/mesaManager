@@ -29,7 +29,8 @@ type Conversation =
   | { kind: 'seat_reference' }
   | { kind: 'await_reference'; nextAction: 'cancel_reservation' | 'seat_reservation' }
   | { kind: 'await_modify_ref' }
-  | { kind: 'modify_reservation'; reference: string };
+  | { kind: 'modify_reservation'; reference: string }
+  | { kind: 'search_reservation_query' };
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
@@ -444,6 +445,25 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       return;
     }
 
+    // ── search_reservation_query: user searching for a reservation by name/table
+    if (conversationRef.current?.kind === 'search_reservation_query') {
+      conversationRef.current = null;
+      const found = findReservation(command, [...reservations, ...todayReservations], tables);
+      if (!found) {
+        reply(`No encuentro ninguna reserva para "${command}". Puedes decirme el nombre completo o el número de mesa.`);
+        return;
+      }
+      if ('ambiguous' in found) {
+        reply(`Tengo varias: ${found.ambiguous.slice(0, 3).map((r) => `${r.guest_name} a las ${r.time.slice(0, 5)}`).join(', ')}. ¿Cuál buscas?`);
+        conversationRef.current = { kind: 'search_reservation_query' };
+        return;
+      }
+      const r = found.reservation;
+      const tblLabel = r.table?.label ? `, mesa ${r.table.label}` : '';
+      reply(`Aquí la tienes: reserva de ${r.guest_name}, ${r.party_size} personas, el ${r.date} a las ${r.time.slice(0, 5)}${tblLabel}.`);
+      return;
+    }
+
     // ── seat_reference: resolve by name / table / reference number ─────────
     if (conversationRef.current?.kind === 'seat_reference') {
       conversationRef.current = null;
@@ -657,6 +677,16 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       } else if (/(modifica|modificar|cambia|cambiar|mueve|mover|actualiza|actualizar)/i.test(command)) {
         conversationRef.current = { kind: 'await_modify_ref' };
         message = '¿Qué reserva quieres modificar? Díme el nombre del cliente o la mesa.';
+      } else if (/(busca|buscar|encuentra|encontrar|localiza|localizar|consultar?)\s+(la\s+)?reserva/i.test(command)) {
+        const found = findReservation(command, [...reservations, ...todayReservations], tables);
+        if (found && !('ambiguous' in found)) {
+          const r = found.reservation;
+          const tblLabel = r.table?.label ? `, mesa ${r.table.label}` : '';
+          message = `Aquí está: ${r.guest_name}, ${r.party_size} personas el ${r.date} a las ${r.time.slice(0, 5)}${tblLabel}.`;
+        } else {
+          conversationRef.current = { kind: 'search_reservation_query' };
+          message = '¿Qué reserva quieres buscar? Dime el nombre del cliente o la mesa.';
+        }
       } else if (/(reserva|reservar|quiero|haz|ponme|dame|necesito)/i.test(command)) {
         conversationRef.current = { kind: 'reservation', draft: {} };
         message = '¿Qué mesa quieres reservar?';
