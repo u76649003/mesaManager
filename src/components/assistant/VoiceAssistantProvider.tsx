@@ -21,7 +21,18 @@ type Recognition = { lang: string; interimResults: boolean; continuous: boolean;
 declare global { interface Window { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition } }
 
 type PendingProposal = { summary: string; operation: AssistantOperation; prepayment?: boolean; paymentRequest?: 'online' | 'bizum' };
-type ReservationDraft = { tableLabel?: string; guestName?: string; date?: string; time?: string; partySize?: number };
+type ReservationDraft = {
+  tableLabel?: string;
+  guestName?: string;
+  date?: string;
+  time?: string;
+  partySize?: number;
+  notes?: string;
+  askedNotes?: boolean;
+  paymentMethod?: 'none' | 'bizum' | 'online';
+  askedPayment?: boolean;
+  paymentAmount?: number;
+};
 type Conversation =
   | { kind: 'free_tables_room' }
   | { kind: 'search_tables'; roomId?: string; partySize?: number }
@@ -568,7 +579,6 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         if (matchedTable) {
           draft.tableLabel = matchedTable.label;
         } else {
-          // Spoken text is not a valid table label -> clear conversation so intent parser handles it
           conversationRef.current = null;
         }
       } else if (!draft.partySize) {
@@ -590,12 +600,49 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         } else {
           conversationRef.current = null;
         }
+      } else if (!draft.askedNotes) {
+        const isNoNote = /^(no|ninguna|sin\s+notas?|nada|sin\s+nota)$/i.test(command.trim());
+        if (!isNoNote) {
+          draft.notes = command.trim();
+        }
+        draft.askedNotes = true;
+      } else if (!draft.askedPayment) {
+        const isNoPay = /^(no|ningun[ao]|sin\s+pago|sin\s+anticipo|nada|sin\s+anticipos)$/i.test(command.trim());
+        if (isNoPay) {
+          draft.paymentMethod = 'none';
+          draft.askedPayment = true;
+        } else {
+          const isBizum = /bizum/i.test(command);
+          const isOnline = /(pasarela|tarjeta|online|email|correo)/i.test(command);
+          const amtMatch = command.match(/(\d+(?:[.,]\d{1,2})?)/);
+          if (isBizum) draft.paymentMethod = 'bizum';
+          else if (isOnline) draft.paymentMethod = 'online';
+
+          if (amtMatch) {
+            draft.paymentAmount = Number(amtMatch[1].replace(',', '.'));
+            draft.askedPayment = true;
+          } else if (isBizum || isOnline) {
+            reply(`¿De cuántos euros de anticipo por ${isBizum ? 'Bizum' : 'pasarela de pago'}?`);
+            return;
+          } else {
+            draft.paymentMethod = 'none';
+            draft.askedPayment = true;
+          }
+        }
       }
 
-      // If still in reservation draft mode after processing
       if (conversationRef.current?.kind === 'reservation') {
-        const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : !draft.guestName ? '¿A nombre de quién?' : null;
+        const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?'
+          : !draft.partySize ? '¿Para cuántas personas?'
+          : !draft.date ? '¿Para qué día?'
+          : !draft.time ? '¿A qué hora?'
+          : !draft.guestName ? '¿A nombre de quién?'
+          : !draft.askedNotes ? '¿Quieres añadir alguna nota o petición especial a la reserva? (O di no)'
+          : !draft.askedPayment ? '¿Quieres solicitar pago de anticipo por Bizum o por pasarela de pago? (O di no)'
+          : null;
+
         if (missing) { reply(missing); return; }
+
         const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
         if (!table) { const bad = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${bad}. ¿Qué mesa quieres reservar?`); return; }
         setWorking(true);
@@ -609,7 +656,30 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
             reply(alt ? `La mesa ${table.label} no está disponible o no tiene capacidad. Sí está disponible ${alt.label}. ¿Quieres que reserve esa en su lugar?` : `La mesa ${table.label} no está disponible y no encuentro alternativa válida.`);
             return;
           }
-          const next = { summary: `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}.`, operation: { action: 'create_reservation' as const, guest_name: draft.guestName, party_size: draft.partySize, date: draft.date, time: draft.time, duration_minutes: 90, table_id: table.id } };
+
+          const noteStr = draft.notes ? ` (Nota: ${draft.notes})` : '';
+          const payStr = draft.paymentMethod && draft.paymentMethod !== 'none' && draft.paymentAmount
+            ? `. Se enviará solicitud de anticipo de ${draft.paymentAmount.toFixed(2)}€ por ${draft.paymentMethod === 'bizum' ? 'Bizum' : 'pasarela de pago'}`
+            : '';
+
+          const summary = `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}${noteStr}${payStr}.`;
+
+          const next: PendingProposal = {
+            summary,
+            operation: {
+              action: 'create_reservation' as const,
+              guest_name: draft.guestName,
+              party_size: draft.partySize,
+              date: draft.date,
+              time: draft.time,
+              duration_minutes: 90,
+              table_id: table.id,
+              notes: draft.notes,
+              amount: draft.paymentAmount,
+            },
+            paymentRequest: draft.paymentMethod && draft.paymentMethod !== 'none' ? draft.paymentMethod : undefined,
+          };
+
           styleRef.current = evolveStyle(styleRef.current, command, { partySize: draft.partySize, time: draft.time, guestName: draft.guestName });
           if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
           conversationRef.current = null; setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
