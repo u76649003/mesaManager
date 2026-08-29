@@ -7,7 +7,9 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
@@ -17,117 +19,150 @@ import android.speech.tts.Voice;
 import androidx.core.app.NotificationCompat;
 import java.text.Normalizer;
 import java.util.ArrayList;
-import java.util.Locale;
 import java.util.Comparator;
+import java.util.Locale;
 
 public class WakeWordService extends Service implements RecognitionListener {
-    public static final String ACTION_START = "com.mesamanager.app.WAKE_START";
-    public static final String ACTION_STOP = "com.mesamanager.app.WAKE_STOP";
+    public static final String ACTION_START   = "com.mesamanager.app.WAKE_START";
+    public static final String ACTION_STOP    = "com.mesamanager.app.WAKE_STOP";
     public static final String ACTION_COMMAND = "com.mesamanager.app.WAKE_COMMAND";
-    public static final String ACTION_SPEAK = "com.mesamanager.app.WAKE_SPEAK";
-    public static final String EXTRA_NAME = "assistantName";
+    public static final String ACTION_SPEAK   = "com.mesamanager.app.WAKE_SPEAK";
+    public static final String EXTRA_NAME    = "assistantName";
     public static final String EXTRA_COMMAND = "command";
-    public static final String EXTRA_TEXT = "text";
+    public static final String EXTRA_TEXT    = "text";
     public static final String EXTRA_EXPECT_REPLY = "expectReply";
-    private static final String CHANNEL_ID = "mesamanager_assistant";
-    private static final int NOTIFICATION_ID = 1707;
 
+    private static final String CHANNEL_ID      = "mesamanager_assistant";
+    private static final int    NOTIFICATION_ID = 1707;
+    /** How long (ms) to wait after TTS ends before starting the recognizer */
+    private static final long   POST_SPEAK_DELAY_MS = 550L;
+    /** How long (ms) the user has to respond before we go back to wake-word mode */
+    private static final long   REPLY_TIMEOUT_MS = 14_000L;
+    /** Minimum gap (ms) between identical consecutive commands */
+    private static final long   DEDUP_MS = 2_000L;
+
+    private Handler          mainHandler;
+    private Runnable         awaitingTimeout;
     private SpeechRecognizer recognizer;
-    private Intent recognitionIntent;
-    private String wakePhrase = "ey mara";
-    private boolean awaitingCommand = false;
-    private boolean stopping = false;
-    private boolean wakeAcknowledged = false;
-    private String lastCommand = "";
-    private long lastCommandAt = 0;
-    private long promptPauseUntil = 0;
-    private TextToSpeech tts;
-    private boolean speaking = false;
-    private int conversationGeneration = 0;
+    private Intent           recognitionIntent;
+    private String           wakePhrase = "ey mara";
+    private boolean          awaitingCommand  = false;
+    private boolean          wakeAcknowledged = false;
+    private boolean          stopping = false;
+    private boolean          speaking = false;
+    private String           lastCommand  = "";
+    private long             lastCommandAt = 0;
+    private long             promptPauseUntil = 0;
+    private TextToSpeech     tts;
+
+    // === Lifecycle ===========================================================
 
     @Override public void onCreate() {
         super.onCreate();
+        mainHandler = new Handler(Looper.getMainLooper());
         createChannel();
+
         recognitionIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+
         tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS) {
-                Locale spanish = new Locale("es", "ES");
-                tts.setLanguage(spanish);
-                Voice best = tts.getVoices() == null ? null : tts.getVoices().stream()
-                    .filter(voice -> voice.getLocale() != null && "es".equals(voice.getLocale().getLanguage()))
-                    .max(Comparator.comparingInt(Voice::getQuality)
-                        .thenComparingInt(voice -> voice.isNetworkConnectionRequired() ? 1 : 0)).orElse(null);
-                if (best != null) tts.setVoice(best);
-                tts.setSpeechRate(0.94f);
-                tts.setPitch(1.02f);
-            }
+            if (status != TextToSpeech.SUCCESS) return;
+            tts.setLanguage(new Locale("es", "ES"));
+            // Prefer best-quality local voice; only fall back to network if nothing local is found
+            Voice best = tts.getVoices() == null ? null : tts.getVoices().stream()
+                .filter(v -> v.getLocale() != null && "es".equals(v.getLocale().getLanguage()))
+                .max(Comparator
+                    .comparingInt(Voice::getQuality)
+                    .thenComparingInt(v -> v.isNetworkConnectionRequired() ? 0 : 1))
+                .orElse(null);
+            if (best != null) tts.setVoice(best);
+            tts.setSpeechRate(0.94f);
+            tts.setPitch(1.02f);
         });
+
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-            @Override public void onStart(String utteranceId) { speaking = true; }
-            @Override public void onError(String utteranceId) { finishSpeaking(true); }
-            @Override public void onDone(String utteranceId) { finishSpeaking(true); }
+            @Override public void onStart(String id) { speaking = true; }
+            @Override public void onError(String id)  { finishSpeaking(id); }
+            @Override public void onDone(String id)   { finishSpeaking(id); }
         });
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            stopping = true; stopListening(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY;
-        }
-        if (intent != null && ACTION_SPEAK.equals(intent.getAction())) {
-            speak(intent.getStringExtra(EXTRA_TEXT), intent.getBooleanExtra(EXTRA_EXPECT_REPLY, true));
+        if (intent == null) {
+            startForeground(NOTIFICATION_ID, notification("Di \"" + wakePhrase + "\" para hablar"));
+            startListening();
             return START_STICKY;
         }
-        String name = intent == null ? null : intent.getStringExtra(EXTRA_NAME);
+        if (ACTION_STOP.equals(intent.getAction())) {
+            stopping = true; stopListening(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (ACTION_SPEAK.equals(intent.getAction())) {
+            doSpeak(intent.getStringExtra(EXTRA_TEXT), intent.getBooleanExtra(EXTRA_EXPECT_REPLY, true));
+            return START_STICKY;
+        }
+        // ACTION_START (or restart)
+        String name = intent.getStringExtra(EXTRA_NAME);
         if (name != null && !name.trim().isEmpty()) wakePhrase = normalize("ey " + name.trim());
-        startForeground(NOTIFICATION_ID, notification("Di “" + wakePhrase + "” para hablar"));
+        startForeground(NOTIFICATION_ID, notification("Di \"" + wakePhrase + "\" para hablar"));
         stopping = false;
         startListening();
         return START_STICKY;
     }
 
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        stopping = true; cancelAwaitingTimeout(); stopListening();
+        stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override public void onDestroy() {
+        stopping = true; cancelAwaitingTimeout(); stopListening();
+        if (tts != null) { tts.stop(); tts.shutdown(); }
+        super.onDestroy();
+    }
+
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    // === Speech Recognition ==================================================
+
     private void startListening() {
         if (stopping || speaking || !SpeechRecognizer.isRecognitionAvailable(this)) return;
+        long now = System.currentTimeMillis();
+        if (now < promptPauseUntil) {
+            // Too soon after TTS; retry when the pause expires
+            mainHandler.postDelayed(this::startListening, promptPauseUntil - now + 50);
+            return;
+        }
         if (recognizer == null) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this);
             recognizer.setRecognitionListener(this);
         }
-        try { recognizer.startListening(recognitionIntent); } catch (RuntimeException ignored) { restart(); }
+        try { recognizer.startListening(recognitionIntent); }
+        catch (RuntimeException ignored) { scheduleRestart(); }
     }
 
     private void stopListening() {
         if (recognizer != null) { recognizer.cancel(); recognizer.destroy(); recognizer = null; }
     }
 
-    private void restart() {
-        if (!stopping) {
-            long delay = Math.max(650, promptPauseUntil - System.currentTimeMillis());
-            new android.os.Handler(getMainLooper()).postDelayed(this::startListening, delay);
-        }
+    /** Schedule a fresh start, honouring any promptPauseUntil guard. */
+    private void scheduleRestart() {
+        if (!stopping && !speaking) mainHandler.postDelayed(this::startListening, 650);
     }
 
-    private void speak(String text, boolean expectReply) {
-        if (text == null || text.trim().isEmpty() || tts == null) return;
-        speaking = true; awaitingCommand = expectReply; wakeAcknowledged = false; conversationGeneration++;
-        if (recognizer != null) recognizer.cancel();
-        Bundle params = new Bundle();
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "mesamanager-" + System.currentTimeMillis());
-    }
-
-    private void finishSpeaking(boolean expectReply) {
-        new android.os.Handler(getMainLooper()).post(() -> {
-            speaking = false;
-            int generation = conversationGeneration;
-            promptPauseUntil = System.currentTimeMillis() + 350;
-            restart();
-            new android.os.Handler(getMainLooper()).postDelayed(() -> {
-                if (generation == conversationGeneration && !speaking) awaitingCommand = false;
-            }, 12000);
-        });
-    }
+    @Override public void onResults(Bundle results)        { consume(results, true);  scheduleRestart(); }
+    @Override public void onPartialResults(Bundle partial) { consume(partial, false); }
+    @Override public void onError(int error)               { scheduleRestart(); }
+    @Override public void onReadyForSpeech(Bundle p) {}
+    @Override public void onBeginningOfSpeech() {}
+    @Override public void onRmsChanged(float r) {}
+    @Override public void onBufferReceived(byte[] b) {}
+    @Override public void onEndOfSpeech() {}
+    @Override public void onEvent(int t, Bundle p) {}
 
     private void consume(Bundle results, boolean isFinal) {
         ArrayList<String> phrases = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
@@ -135,8 +170,9 @@ public class WakeWordService extends Service implements RecognitionListener {
         for (String original : phrases) {
             String phrase = normalize(original);
             if (awaitingCommand && !phrase.isBlank()) {
-                int wakeIndex = phrase.indexOf(wakePhrase);
-                String command = wakeIndex >= 0 ? phrase.substring(wakeIndex + wakePhrase.length()).trim() : original.trim();
+                // Mid-conversation: strip accidental re-utterance of wake phrase
+                int wi = phrase.indexOf(wakePhrase);
+                String command = wi >= 0 ? phrase.substring(wi + wakePhrase.length()).trim() : original.trim();
                 if (!command.isEmpty() && isFinal) { awaitingCommand = false; wakeAcknowledged = false; emit(command); }
                 return;
             }
@@ -144,8 +180,9 @@ public class WakeWordService extends Service implements RecognitionListener {
             if (index >= 0) {
                 String remainder = phrase.substring(index + wakePhrase.length()).trim();
                 if (!wakeAcknowledged) {
-                    wakeAcknowledged = true; awaitingCommand = true; promptPauseUntil = System.currentTimeMillis() + 1700;
-                    emit("__WAKE__"); updateNotification("Te escucho…");
+                    wakeAcknowledged = true; awaitingCommand = true;
+                    promptPauseUntil = System.currentTimeMillis() + 1700;
+                    emit("__WAKE__"); updateNotification("Te escucho...");
                     if (recognizer != null) recognizer.cancel();
                 }
                 if (!remainder.isEmpty() && isFinal) { awaitingCommand = false; wakeAcknowledged = false; emit(remainder); }
@@ -156,13 +193,68 @@ public class WakeWordService extends Service implements RecognitionListener {
 
     private void emit(String command) {
         long now = System.currentTimeMillis();
-        if (normalize(command).equals(normalize(lastCommand)) && now - lastCommandAt < 3500) return;
+        if (normalize(command).equals(normalize(lastCommand)) && now - lastCommandAt < DEDUP_MS) return;
         lastCommand = command; lastCommandAt = now;
+        cancelAwaitingTimeout(); // Command received - no longer waiting for reply
         Intent event = new Intent(ACTION_COMMAND).setPackage(getPackageName());
         event.putExtra(EXTRA_COMMAND, command);
         sendBroadcast(event);
-        updateNotification("Orden recibida. Esperando “" + wakePhrase + "”…");
+        updateNotification("Procesando... Di \"" + wakePhrase + "\" para continuar.");
     }
+
+    // === Text-to-Speech ======================================================
+
+    /**
+     * Speak text. If expectReply=true we stay in conversation mode after TTS
+     * finishes; otherwise we go back to wake-word mode.
+     * expectReply is encoded inside the utteranceId so the async callback can read it.
+     */
+    private void doSpeak(String text, boolean expectReply) {
+        if (text == null || text.trim().isEmpty() || tts == null) return;
+        speaking = true;
+        cancelAwaitingTimeout();
+        // Destroy recognizer to prevent TTS audio from being misinterpreted as speech
+        if (recognizer != null) { recognizer.cancel(); recognizer.destroy(); recognizer = null; }
+        String uid = "mm-" + (expectReply ? "reply" : "final") + "-" + System.currentTimeMillis();
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, new Bundle(), uid);
+    }
+
+    private void finishSpeaking(String utteranceId) {
+        boolean expectReply = utteranceId != null && utteranceId.contains("-reply-");
+        mainHandler.post(() -> {
+            speaking = false;
+            // Always recreate a clean recognizer after TTS (avoids stale state)
+            stopListening();
+            if (stopping) return;
+            if (expectReply) {
+                // Stay in conversation: listen for the user's follow-up
+                awaitingCommand = true;
+                wakeAcknowledged = true; // Already mid-conversation; no wake phrase needed
+                promptPauseUntil = System.currentTimeMillis() + POST_SPEAK_DELAY_MS;
+                mainHandler.postDelayed(this::startListening, POST_SPEAK_DELAY_MS);
+                updateNotification("Te escucho...");
+                // If user doesn't reply within timeout, go back to wake-word mode
+                awaitingTimeout = () -> {
+                    awaitingCommand = false; wakeAcknowledged = false;
+                    updateNotification("Di \"" + wakePhrase + "\" para hablar");
+                    scheduleRestart();
+                };
+                mainHandler.postDelayed(awaitingTimeout, REPLY_TIMEOUT_MS);
+            } else {
+                // Final response: reset to wake-word mode
+                awaitingCommand = false; wakeAcknowledged = false;
+                promptPauseUntil = System.currentTimeMillis() + 400;
+                mainHandler.postDelayed(this::startListening, 400);
+                updateNotification("Di \"" + wakePhrase + "\" para hablar");
+            }
+        });
+    }
+
+    private void cancelAwaitingTimeout() {
+        if (awaitingTimeout != null) { mainHandler.removeCallbacks(awaitingTimeout); awaitingTimeout = null; }
+    }
+
+    // === Helpers =============================================================
 
     private String normalize(String value) {
         return Normalizer.normalize(value.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
@@ -170,33 +262,20 @@ public class WakeWordService extends Service implements RecognitionListener {
     }
 
     private void createChannel() {
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Asistente de MesaManager", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("Mantiene activa la escucha de la palabra de activación.");
-        getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Asistente de MesaManager", NotificationManager.IMPORTANCE_LOW);
+        ch.setDescription("Mantiene activa la escucha de la palabra de activacion.");
+        getSystemService(NotificationManager.class).createNotificationChannel(ch);
     }
 
     private Notification notification(String text) {
-        Intent open = new Intent(this, MainActivity.class);
-        PendingIntent pending = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
+            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher).setContentTitle("Asistente activo")
-            .setContentText(text).setOngoing(true).setContentIntent(pending).build();
+            .setContentText(text).setOngoing(true).setContentIntent(pi).build();
     }
 
     private void updateNotification(String text) {
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
     }
-
-    @Override public void onResults(Bundle results) { consume(results, true); restart(); }
-    @Override public void onPartialResults(Bundle partialResults) { consume(partialResults, false); }
-    @Override public void onError(int error) { restart(); }
-    @Override public void onReadyForSpeech(Bundle params) {}
-    @Override public void onBeginningOfSpeech() {}
-    @Override public void onRmsChanged(float rmsdB) {}
-    @Override public void onBufferReceived(byte[] buffer) {}
-    @Override public void onEndOfSpeech() {}
-    @Override public void onEvent(int eventType, Bundle params) {}
-    @Override public IBinder onBind(Intent intent) { return null; }
-    @Override public void onTaskRemoved(Intent rootIntent) { stopping = true; stopListening(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); super.onTaskRemoved(rootIntent); }
-    @Override public void onDestroy() { stopping = true; stopListening(); if (tts != null) { tts.stop(); tts.shutdown(); } super.onDestroy(); }
 }
