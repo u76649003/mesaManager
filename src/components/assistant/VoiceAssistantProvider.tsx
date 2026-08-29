@@ -24,13 +24,11 @@ type PendingProposal = { summary: string; operation: AssistantOperation; prepaym
 type ReservationDraft = { tableLabel?: string; guestName?: string; date?: string; time?: string; partySize?: number };
 type Conversation =
   | { kind: 'free_tables_room' }
+  | { kind: 'search_tables'; roomId?: string; partySize?: number }
   | { kind: 'reservation'; draft: ReservationDraft }
   | { kind: 'seat_reference' }
-  /** Waiting for user to say a reservation reference, then cancel/seat it */
   | { kind: 'await_reference'; nextAction: 'cancel_reservation' | 'seat_reservation' }
-  /** Step 1 of modify: collect the reservation reference */
   | { kind: 'await_modify_ref' }
-  /** Step 2 of modify: reference known, ask what to change */
   | { kind: 'modify_reservation'; reference: string };
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
@@ -46,6 +44,43 @@ function overlaps(table: Table, reservations: Reservation[], date: string, time:
   return reservations.some((r) => r.table_id === table.id && r.date === date && !['cancelled', 'no_show', 'completed'].includes(r.status)
     && target >= r.time.slice(0, 5).split(':').map(Number).reduce((h, m) => h * 60 + m)
     && target < r.time.slice(0, 5).split(':').map(Number).reduce((h, m) => h * 60 + m) + (r.duration_minutes || 90));
+}
+
+/**
+ * Find a reservation in the local cache by guest name or table label.
+ * Returns the matched reservation, an ambiguous list, or null.
+ */
+function findReservation(
+  input: string,
+  reservations: Reservation[],
+  tables: Table[],
+): { reservation: Reservation } | { ambiguous: Reservation[] } | null {
+  const raw  = input.trim();
+  const norm = raw.toLocaleLowerCase('es-ES')
+    .replace(/^(la\s+reserva\s+(de(l?)?\s*)?|reserva\s+(de(l?)?\s*)?|la\s+de\s*)/, '')
+    .replace(/^(la\s+)?mesa\s+/, '')
+    .trim();
+  const active = reservations.filter((r) => !['cancelled', 'no_show'].includes(r.status));
+
+  // 1. Match by table label
+  const tbl = tables.find(
+    (t) => t.label.toLocaleLowerCase('es-ES') === norm ||
+           t.label.toLocaleLowerCase('es-ES') === raw.toLocaleLowerCase('es-ES'),
+  );
+  if (tbl) {
+    const byTable = active.filter((r) => r.table_id === tbl.id);
+    if (byTable.length === 1) return { reservation: byTable[0] };
+    if (byTable.length > 1)  return { ambiguous: byTable };
+  }
+
+  // 2. Match by guest name (substring / first-name prefix)
+  const byName = active.filter((r) => {
+    const gn = r.guest_name.toLocaleLowerCase('es-ES');
+    return gn.includes(norm) || norm.includes(gn.split(' ')[0]);
+  });
+  if (byName.length === 1) return { reservation: byName[0] };
+  if (byName.length > 1)  return { ambiguous: byName };
+  return null;
 }
 
 /** True when the assistant message is a question or we are mid-conversation. */
@@ -205,52 +240,135 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     setProposal(null);
     let message = '';
 
-    // ── Active conversation turns ────────────────────────────────────────────
-    if (conversationRef.current?.kind === 'free_tables_room') {
-      const normalized = command.toLocaleLowerCase('es-ES');
-      const room = rooms.find((r) => normalized.includes(r.name.toLocaleLowerCase('es-ES')));
-      if (!room) { reply(`No reconozco ese salón. Puedes decir ${rooms.map((r) => r.name).join(' o ')}.`); return; }
-      const { data, error } = await createClient().from('tables').select('*, table_type:table_types(*)').eq('room_id', room.id).eq('is_active', true);
-      if (error) { reply('No he podido consultar las mesas de ese salón.'); return; }
+    // ── search_tables: multi-step free-table search (room + partySize) ────────
+    if (conversationRef.current?.kind === 'search_tables' ||
+        conversationRef.current?.kind === 'free_tables_room') {
+      const ctx = conversationRef.current.kind === 'search_tables'
+        ? conversationRef.current
+        : { kind: 'search_tables' as const, roomId: undefined, partySize: undefined };
+      const norm = command.toLocaleLowerCase('es-ES');
+
+      // 1. Extract room if not yet known and there are multiple rooms
+      if (!ctx.roomId && rooms.length > 1) {
+        const room = rooms.find((r) => norm.includes(r.name.toLocaleLowerCase('es-ES')));
+        if (room) { ctx.roomId = room.id; }
+        else {
+          conversationRef.current = { kind: 'search_tables', ...ctx };
+          reply(`No reconozco ese salón. Puedes decir ${rooms.map((r) => r.name).join(' o ')}.`);
+          return;
+        }
+      }
+
+      // 2. Extract partySize if not yet known
+      if (!ctx.partySize) {
+        const numMatch = norm.match(/\b(\d{1,2})\b/);
+        if (numMatch) ctx.partySize = Number(numMatch[1]);
+      }
+
+      // 3. If partySize still missing, ask for it
+      if (!ctx.partySize) {
+        conversationRef.current = { kind: 'search_tables', ...ctx };
+        reply('¿Para cuántas personas?');
+        return;
+      }
+
+      // 4. We have enough — answer
       conversationRef.current = null;
-      const roomTables = (data ?? []) as Table[];
-      const free = roomTables.filter((t) => !overlaps(t, reservations, selectedDate, selectedTime));
-      reply(free.length ? `En ${room.name} tienes ${free.length} mesas libres: ${free.map((t) => t.label).join(', ')}.` : `No tienes mesas libres en ${room.name}.`);
+      setWorking(true);
+      try {
+        let roomTables: Table[];
+        if (ctx.roomId) {
+          const { data } = await createClient().from('tables').select('*, table_type:table_types(*)').eq('room_id', ctx.roomId).eq('is_active', true);
+          roomTables = (data ?? []) as Table[];
+        } else {
+          roomTables = tables.filter((t) => t.is_active);
+        }
+        const roomName = ctx.roomId ? rooms.find((r) => r.id === ctx.roomId)?.name : null;
+        const ps = ctx.partySize!;
+        const free = roomTables.filter((t) => capacity(t) >= ps && !overlaps(t, reservations, selectedDate, selectedTime));
+        const prefix = roomName ? `En ${roomName}, ` : '';
+        reply(
+          free.length
+            ? `${prefix}para ${ps} personas tienes ${free.length} mesas libres: ${free.slice(0, 8).map((t) => t.label).join(', ')}${free.length > 8 ? ` y ${free.length - 8} más` : ''}. ¿Quieres que reserve alguna?`
+            : `${prefix}no veo mesas libres para ${ps} personas en este momento.`,
+        );
+      } catch { reply('No he podido consultar las mesas ahora mismo.'); }
+      finally { setWorking(false); }
       return;
     }
 
+    // ── seat_reference: resolve by name / table / reference number ─────────
     if (conversationRef.current?.kind === 'seat_reference') {
-      const reference = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
-      if (!reference) { reply('Dime el número completo de reserva, por ejemplo RES-2026-000123.'); return; }
-      conversationRef.current = null; setWorking(true);
-      try {
-        const next = await buildProposal({ action: 'seat_reservation', reference: reference.toUpperCase() });
+      conversationRef.current = null;
+      const refMatch = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
+      if (refMatch) {
+        setWorking(true);
+        try {
+          const next = await buildProposal({ action: 'seat_reservation', reference: refMatch.toUpperCase() });
+          setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+        } catch (e) { reply(e instanceof Error ? e.message : 'No pude localizar esa reserva.'); }
+        finally { setWorking(false); }
+      } else {
+        const found = findReservation(command, [...reservations, ...todayReservations], tables);
+        if (!found) { reply('No encuentro esa reserva. ¿Puedes decirme el nombre del cliente o la mesa?'); return; }
+        if ('ambiguous' in found) {
+          reply(`Hay varias. ¿Cuál? ${found.ambiguous.slice(0, 3).map((r) => `${r.guest_name} a las ${r.time.slice(0, 5)}`).join(', ')}.`);
+          conversationRef.current = { kind: 'seat_reference' };
+          return;
+        }
+        const r = found.reservation;
+        const next = { summary: `Sentar a ${r.guest_name} (${r.reservation_number}). La mesa quedará como ocupada.`, operation: { action: 'seat_reservation' as const, reservation_id: r.id } };
         setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
-      } catch (error) { reply(error instanceof Error ? error.message : 'No pude localizar esa reserva.'); }
-      finally { setWorking(false); }
+      }
       return;
     }
 
-    // ── await_reference: user needs to tell us the reservation number ──────────
+    // ── await_reference: resolve by name / table / reference number ─────────
     if (conversationRef.current?.kind === 'await_reference') {
-      const reference = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
-      if (!reference) { reply('Dime el número de reserva, por ejemplo RES-2026-000123.'); return; }
       const nextAction = conversationRef.current.nextAction;
-      conversationRef.current = null; setWorking(true);
-      try {
-        const next = await buildProposal({ action: nextAction, reference: reference.toUpperCase() });
+      conversationRef.current = null;
+      const refMatch = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
+      if (refMatch) {
+        setWorking(true);
+        try {
+          const next = await buildProposal({ action: nextAction, reference: refMatch.toUpperCase() });
+          setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+        } catch (e) { reply(e instanceof Error ? e.message : 'No pude localizar esa reserva.'); }
+        finally { setWorking(false); }
+      } else {
+        const found = findReservation(command, [...reservations, ...todayReservations], tables);
+        if (!found) { reply('No encuentro esa reserva. Dime el nombre del cliente o la mesa.'); conversationRef.current = { kind: 'await_reference', nextAction }; return; }
+        if ('ambiguous' in found) {
+          reply(`Hay varias. ¿Cuál? ${found.ambiguous.slice(0, 3).map((r) => `${r.guest_name} a las ${r.time.slice(0, 5)}`).join(', ')}.`);
+          conversationRef.current = { kind: 'await_reference', nextAction };
+          return;
+        }
+        const r = found.reservation;
+        const actionLabel = nextAction === 'cancel_reservation'
+          ? `Cancelar la reserva de ${r.guest_name} (${r.date} a las ${r.time.slice(0, 5)})`
+          : `Sentar a ${r.guest_name} (${r.reservation_number})`;
+        const next = { summary: actionLabel + '.', operation: { action: nextAction, reservation_id: r.id } };
         setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
-      } catch (error) { reply(error instanceof Error ? error.message : 'No pude localizar esa reserva.'); }
-      finally { setWorking(false); }
+      }
       return;
     }
 
-    // ── await_modify_ref: step 1 of modify - collect the reservation number ───
+    // ── await_modify_ref: step 1 - collect the reservation to modify ────────
     if (conversationRef.current?.kind === 'await_modify_ref') {
-      const reference = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
-      if (!reference) { reply('Dime el número de reserva, por ejemplo RES-2026-000123.'); return; }
-      conversationRef.current = { kind: 'modify_reservation', reference: reference.toUpperCase() };
-      reply('¿Qué quieres cambiar? Puedes decir la nueva fecha, hora o número de personas.');
+      const refMatch = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
+      if (refMatch) {
+        conversationRef.current = { kind: 'modify_reservation', reference: refMatch.toUpperCase() };
+        reply('¿Qué quieres cambiar? Dime la nueva fecha, hora o número de personas.');
+      } else {
+        const found = findReservation(command, [...reservations, ...todayReservations], tables);
+        if (!found) { reply('No encuentro esa reserva. Dime el nombre del cliente o la mesa.'); return; }
+        if ('ambiguous' in found) {
+          reply(`Hay varias. ¿Cuál? ${found.ambiguous.slice(0, 3).map((r) => `${r.guest_name} a las ${r.time.slice(0, 5)}`).join(', ')}.`);
+          return;
+        }
+        conversationRef.current = { kind: 'modify_reservation', reference: found.reservation.reservation_number };
+        reply(`¿Qué quieres cambiar de la reserva de ${found.reservation.guest_name}? Dime la nueva fecha, hora o número de personas.`);
+      }
       return;
     }
 
@@ -327,8 +445,15 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       } catch { message = 'No he podido consultar las reservas de ese día.'; }
       finally { setWorking(false); }
     } else if (intent.action === 'list_free_tables') {
-      if (rooms.length > 1) { conversationRef.current = { kind: 'free_tables_room' }; message = `¿En qué salón? Puedes decir ${rooms.map((r) => r.name).join(', ')}.`; }
-      else { const free = tables.filter((t) => t.is_active && !overlaps(t, reservations, selectedDate, selectedTime)); message = free.length ? `Tienes ${free.length} mesas libres: ${free.slice(0, 10).map((t) => t.label).join(', ')}${free.length > 10 ? ` y ${free.length - 10} más` : ''}.` : 'No veo mesas libres en este momento.'; }
+      // Start search_tables conversation: ask for room (if multiple) then partySize
+      const mentionedRoom = rooms.find((r) => command.toLocaleLowerCase('es-ES').includes(r.name.toLocaleLowerCase('es-ES')));
+      const initPartySize = intent.action === 'list_free_tables' ? (intent as { partySize?: number }).partySize : undefined;
+      conversationRef.current = { kind: 'search_tables', roomId: mentionedRoom?.id, partySize: initPartySize };
+      if (rooms.length > 1 && !mentionedRoom) {
+        message = `¿En qué salón? Puedes decir ${rooms.map((r) => r.name).join(', ')}.`;
+      } else {
+        message = '¿Para cuántas personas?';
+      }
     } else if (intent.action === 'draft_reservation') {
       conversationRef.current = { kind: 'reservation', draft: { tableLabel: intent.tableLabel, guestName: intent.guestName, date: intent.date, time: intent.time, partySize: intent.partySize } };
       const draft = conversationRef.current.draft;
@@ -339,19 +464,18 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       // Even when the parser gives up, try to detect a specific intent by keyword
       if (/(sienta|sentar|acomoda)/i.test(command)) {
         conversationRef.current = { kind: 'seat_reference' };
-        message = 'Dime el número de la reserva que quieres sentar.';
+        message = '¿A quién quieres sentar? Díme el nombre del cliente o la mesa.';
       } else if (/(cancela|cancelar|anula|anular)/i.test(command)) {
         conversationRef.current = { kind: 'await_reference', nextAction: 'cancel_reservation' };
-        message = '¿El número de qué reserva quieres cancelar?';
+        message = '¿Qué reserva quieres cancelar? Díme el nombre del cliente o la mesa.';
       } else if (/(modifica|modificar|cambia|cambiar|mueve|mover|actualiza|actualizar)/i.test(command)) {
         conversationRef.current = { kind: 'await_modify_ref' };
-        message = '¿El número de qué reserva quieres modificar?';
+        message = '¿Qué reserva quieres modificar? Díme el nombre del cliente o la mesa.';
       } else if (/(reserva|reservar|quiero|haz|ponme|dame|necesito)/i.test(command)) {
-        // Naked reservation intent without details → start draft flow
         conversationRef.current = { kind: 'reservation', draft: {} };
         message = '¿Qué mesa quieres reservar?';
       } else {
-        message = 'Puedo decirte las reservas de hoy, qué mesas están libres, recomendar una mesa, y también reservar, modificar o cancelar reservas. ¿Qué necesitas?';
+        message = 'Puedo decirte las reservas de hoy, qué mesas están libres para X personas, recomendar una mesa, y también reservar, modificar o cancelar. ¿Qué necesitas?';
       }
     } else {
       setWorking(true);
