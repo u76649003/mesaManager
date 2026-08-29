@@ -14,7 +14,7 @@ import {
 } from '@/lib/assistant/reservations';
 import { useFloorStore } from '@/stores/useFloorStore';
 import { useReservationStore } from '@/stores/useReservationStore';
-import type { Reservation, Table } from '@/types';
+import type { Reservation, Room, Table } from '@/types';
 
 type RecognitionEvent = { results: ArrayLike<{ 0: { transcript: string } }> };
 type Recognition = { lang: string; interimResults: boolean; continuous: boolean; start: () => void; stop: () => void; onresult: ((e: RecognitionEvent) => void) | null; onend: (() => void) | null; onerror: (() => void) | null };
@@ -56,6 +56,31 @@ function overlaps(table: Table, reservations: Reservation[], date: string, time:
   return reservations.some((r) => r.table_id === table.id && r.date === date && !['cancelled', 'no_show', 'completed'].includes(r.status)
     && target >= r.time.slice(0, 5).split(':').map(Number).reduce((h, m) => h * 60 + m)
     && target < r.time.slice(0, 5).split(':').map(Number).reduce((h, m) => h * 60 + m) + (r.duration_minutes || 90));
+}
+
+function evaluateOptimalRoomAndTable(
+  partySize: number,
+  rooms: Room[],
+  tables: Table[],
+  reservations: Reservation[],
+  date: string,
+  time: string | null
+) {
+  const activeTables = tables.filter((t) => t.is_active && capacity(t) >= partySize && !overlaps(t, reservations, date, time));
+  if (!activeTables.length) return null;
+
+  const roomSummaries = rooms.map((room) => {
+    const freeInRoom = activeTables.filter((t) => t.room_id === room.id);
+    if (!freeInRoom.length) return null;
+    freeInRoom.sort((a, b) => (capacity(a) - partySize) - (capacity(b) - partySize));
+    return { room, count: freeInRoom.length, bestTable: freeInRoom[0] };
+  }).filter((x): x is NonNullable<typeof x> => x !== null);
+
+  if (!roomSummaries.length) return null;
+
+  roomSummaries.sort((a, b) => (capacity(a.bestTable) - partySize) - (capacity(b.bestTable) - partySize));
+
+  return { bestRoom: roomSummaries[0].room, bestTable: roomSummaries[0].bestTable, roomSummaries };
 }
 
 /**
@@ -631,8 +656,27 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
       }
 
+      const parsedCmd = parseAssistantIntent(command);
+      const cmdPartySize = 'partySize' in parsedCmd ? (parsedCmd.partySize as number | undefined) : undefined;
+      const isAskingOptimalRoom = /\b(en\s+cu[aá]l|qu[eé]\s+sal[oó]n|d[oó]nde|cu[aá]les|mejor\s+sal[oó]n|opci[oó]n\s+m[aá]s\s+[oó]ptima|hay\s+disponibles?|aconsejas?|recomiendas?)\b/i.test(command);
+      if (isAskingOptimalRoom && (draft.partySize || cmdPartySize)) {
+        const ps = draft.partySize ?? cmdPartySize ?? 4;
+        draft.partySize = ps;
+        const optimal = evaluateOptimalRoomAndTable(ps, rooms, tables, reservations, draft.date || selectedDate, draft.time || selectedTime);
+        if (optimal) {
+          draft.tableLabel = optimal.bestTable.label;
+          const otherRooms = optimal.roomSummaries.filter(r => r.room.id !== optimal.bestRoom.id);
+          const otherStr = otherRooms.length ? ` En ${otherRooms[0].room.name} también tienes disponible la mesa ${otherRooms[0].bestTable.label}.` : '';
+          reply(`La opción más óptima para ${ps} personas es en el salón **${optimal.bestRoom.name}**, mesa ${optimal.bestTable.label} (capacidad ${capacity(optimal.bestTable)}).${otherStr} ¿La reservamos a nombre de quién?`);
+          return;
+        } else {
+          reply(`No veo mesas disponibles para ${ps} personas en ningún salón en este momento.`);
+          return;
+        }
+      }
+
       if (conversationRef.current?.kind === 'reservation') {
-        const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?'
+        const missing = !draft.tableLabel ? (rooms.length > 1 ? `¿En qué salón te gustaría reservar? (Puedes decir ${rooms.map(r => r.name).join(', ')}, o preguntarme en cuál hay disponibles)` : '¿Qué mesa quieres reservar?')
           : !draft.partySize ? '¿Para cuántas personas?'
           : !draft.date ? '¿Para qué día?'
           : !draft.time ? '¿A qué hora?'
