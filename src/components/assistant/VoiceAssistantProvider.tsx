@@ -62,6 +62,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const startListenRef   = useRef<() => void>(() => {});
   const conversationRef  = useRef<Conversation | null>(null);
   const proposalRef      = useRef<PendingProposal | null>(null);
+  const autoStartedRef   = useRef(false);  // ensures auto-start fires only once
 
   // ── State ────────────────────────────────────────────────────────────────────
   const [assistantName, setAssistantName] = useState('');
@@ -93,6 +94,25 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       }
     }).catch(() => setResponse('No se pudo cargar la configuración del asistente.')).finally(() => setReady(true));
   }, [isAuthPage]);
+
+  // ── Auto-start mic on first load ─────────────────────────────────────────
+  // On web: open widget + start SpeechRecognition immediately.
+  // On native: speak a greeting with expectReply=true so after TTS the service
+  //            automatically enters awaitingCommand mode (no wake phrase needed).
+  useEffect(() => {
+    if (!ready || isAuthPage || !assistantName || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    setOpen(true);
+    if (Capacitor.isNativePlatform()) {
+      // Small delay to let the WakeWordService initialise TTS fully
+      const t = setTimeout(() => reply('Hola, estoy lista. \u00bfEn qu\u00e9 te ayudo?'), 1400);
+      return () => clearTimeout(t);
+    } else {
+      // Web: open widget and kick off microphone after browser is settled
+      const t = setTimeout(() => startListenRef.current(), 900);
+      return () => clearTimeout(t);
+    }
+  }, [ready, isAuthPage, assistantName, reply]);
 
   useEffect(() => {
     const changed = (e: Event) => setAssistantName((e as CustomEvent<string>).detail);
