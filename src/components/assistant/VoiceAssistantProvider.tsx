@@ -222,14 +222,23 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     }
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'es-ES'; u.rate = 0.95; u.pitch = 1.02;
-    if (expectReply) {
-      u.onend = () => {
-        setAwaitingReply(false);
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      setAwaitingReply(false);
+      if (expectReply) {
         setTimeout(() => startListenRef.current(), 400);
-      };
-    }
+      }
+    };
+    u.onend = finish;
+    u.onerror = finish;
+    // Safety fallback: if browser TTS doesn't trigger onend within estimated time + 4s
+    const approxDurationMs = Math.max(3000, (text.length / 15) * 1000 + 4000);
+    setTimeout(finish, approxDurationMs);
     window.speechSynthesis.speak(u);
   }, []);
 

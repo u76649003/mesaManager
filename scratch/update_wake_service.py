@@ -1,4 +1,6 @@
-package com.mesamanager.app;
+import pathlib
+
+code = r'''package com.mesamanager.app;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -327,3 +329,8 @@ public class WakeWordService extends Service implements RecognitionListener {
         } catch (Exception ignored) {}
     }
 }
+'''
+
+path = pathlib.Path(r'android/app/src/main/java/com/mesamanager/app/WakeWordService.java')
+path.write_text(code, encoding='utf-8')
+print('Successfully wrote raw WakeWordService.java with raw string formatting')
