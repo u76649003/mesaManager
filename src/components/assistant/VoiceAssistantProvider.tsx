@@ -340,6 +340,21 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     setProposal(null);
     let message = '';
 
+    // ── Mid-conversation topic switch / query interruption ────────────────────
+    const freshIntent = parseAssistantIntent(command);
+    if (conversationRef.current !== null) {
+      const isTopLevelQuery =
+        ['list_free_tables', 'list_today_reservations', 'list_reservations_date', 'recommend_table', 'check_table', 'cancel_reservation', 'seat_reservation'].includes(freshIntent.action) ||
+        (freshIntent.action === 'draft_reservation' && (freshIntent.tableLabel || freshIntent.partySize || freshIntent.date || freshIntent.time));
+
+      // Also detect clear question keywords like "qué mesas", "cuáles", "hay disponibles", "ayuda"
+      const isExplicitQuestion = /\b(qu[eé]\s+mesas?|cu[aá]les|hay\s+disponibles?|qu[eé]\s+reservas?|ayuda)\b/i.test(command);
+
+      if (isTopLevelQuery || isExplicitQuestion) {
+        conversationRef.current = null;
+      }
+    }
+
     // ── search_tables: multi-step free-table search (room + partySize) ────────
     if (conversationRef.current?.kind === 'search_tables' ||
         conversationRef.current?.kind === 'free_tables_room') {
@@ -499,32 +514,61 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     if (conversationRef.current?.kind === 'reservation') {
       const draft = conversationRef.current.draft;
       const parsed = parseAssistantIntent(command);
-      if (parsed.action === 'draft_reservation') Object.assign(draft, Object.fromEntries(Object.entries(parsed).filter(([k, v]) => k !== 'action' && v !== undefined)));
-      else if (!draft.tableLabel) draft.tableLabel = command.replace(/^mesa\s+/i, '').trim();
-      else if (!draft.partySize) { const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${command}`); if (f.action === 'draft_reservation') draft.partySize = f.partySize; }
-      else if (!draft.date)     { const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${command}`); if (f.action === 'draft_reservation') draft.date = f.date; }
-      else if (!draft.time)     { const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${draft.date} a las ${command}`); if (f.action === 'draft_reservation') draft.time = f.time; }
-      else if (!draft.guestName) draft.guestName = command.replace(/^(a nombre de|nombre)\s+/i, '').trim();
-      const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : !draft.guestName ? '¿A nombre de quién?' : null;
-      if (missing) { reply(missing); return; }
-      const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
-      if (!table) { const bad = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${bad}. ¿Qué mesa quieres reservar?`); return; }
-      setWorking(true);
-      try {
-        const { data, error } = await createClient().rpc('assistant_table_candidates', { p_date: draft.date, p_time: draft.time, p_party_size: draft.partySize, p_duration_minutes: 90, p_room_id: null, p_exclude_reservation_id: null });
-        if (error) throw error;
-        const candidates = (data ?? []) as Array<{ allocation_type: string; allocation_id: string; label: string }>;
-        const requested = candidates.find((c) => c.allocation_type === 'table' && c.allocation_id === table.id);
-        if (!requested) {
-          const alt = candidates[0]; conversationRef.current = null;
-          reply(alt ? `La mesa ${table.label} no está disponible o no tiene capacidad. Sí está disponible ${alt.label}. ¿Quieres que reserve esa en su lugar?` : `La mesa ${table.label} no está disponible y no encuentro alternativa válida.`);
-          return;
+      if (parsed.action === 'draft_reservation') {
+        Object.assign(draft, Object.fromEntries(Object.entries(parsed).filter(([k, v]) => k !== 'action' && v !== undefined)));
+      } else if (!draft.tableLabel) {
+        const rawLabel = command.replace(/^mesa\s+/i, '').trim();
+        const matchedTable = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === rawLabel.toLocaleLowerCase('es-ES') || t.label.toLocaleLowerCase('es-ES') === command.trim().toLocaleLowerCase('es-ES'));
+        if (matchedTable) {
+          draft.tableLabel = matchedTable.label;
+        } else {
+          // Spoken text is not a valid table label -> clear conversation so intent parser handles it
+          conversationRef.current = null;
         }
-        const next = { summary: `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}.`, operation: { action: 'create_reservation' as const, guest_name: draft.guestName, party_size: draft.partySize, date: draft.date, time: draft.time, duration_minutes: 90, table_id: table.id } };
-        conversationRef.current = null; setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
-      } catch { reply('No he podido comprobar la disponibilidad ahora mismo.'); }
-      finally { setWorking(false); }
-      return;
+      } else if (!draft.partySize) {
+        const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${command}`);
+        if (f.action === 'draft_reservation' && f.partySize) draft.partySize = f.partySize;
+        else conversationRef.current = null;
+      } else if (!draft.date) {
+        const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${command}`);
+        if (f.action === 'draft_reservation' && f.date) draft.date = f.date;
+        else conversationRef.current = null;
+      } else if (!draft.time) {
+        const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${draft.date} a las ${command}`);
+        if (f.action === 'draft_reservation' && f.time) draft.time = f.time;
+        else conversationRef.current = null;
+      } else if (!draft.guestName) {
+        const cleanedName = command.replace(/^(a nombre de|nombre)\s+/i, '').trim();
+        if (cleanedName && !/\b(qu[eé]|cu[aá]l|d[oó]nde|cu[aá]ntas?|hay|mesas?|cancela|ayuda)\b/i.test(cleanedName)) {
+          draft.guestName = cleanedName;
+        } else {
+          conversationRef.current = null;
+        }
+      }
+
+      // If still in reservation draft mode after processing
+      if (conversationRef.current?.kind === 'reservation') {
+        const missing = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : !draft.guestName ? '¿A nombre de quién?' : null;
+        if (missing) { reply(missing); return; }
+        const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
+        if (!table) { const bad = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${bad}. ¿Qué mesa quieres reservar?`); return; }
+        setWorking(true);
+        try {
+          const { data, error } = await createClient().rpc('assistant_table_candidates', { p_date: draft.date, p_time: draft.time, p_party_size: draft.partySize, p_duration_minutes: 90, p_room_id: null, p_exclude_reservation_id: null });
+          if (error) throw error;
+          const candidates = (data ?? []) as Array<{ allocation_type: string; allocation_id: string; label: string }>;
+          const requested = candidates.find((c) => c.allocation_type === 'table' && c.allocation_id === table.id);
+          if (!requested) {
+            const alt = candidates[0]; conversationRef.current = null;
+            reply(alt ? `La mesa ${table.label} no está disponible o no tiene capacidad. Sí está disponible ${alt.label}. ¿Quieres que reserve esa en su lugar?` : `La mesa ${table.label} no está disponible y no encuentro alternativa válida.`);
+            return;
+          }
+          const next = { summary: `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}.`, operation: { action: 'create_reservation' as const, guest_name: draft.guestName, party_size: draft.partySize, date: draft.date, time: draft.time, duration_minutes: 90, table_id: table.id } };
+          conversationRef.current = null; setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+        } catch { reply('No he podido comprobar la disponibilidad ahora mismo.'); }
+        finally { setWorking(false); }
+        return;
+      }
     }
 
     // ── Single-shot intents ──────────────────────────────────────────────────
