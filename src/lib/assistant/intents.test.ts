@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseAssistantIntent } from './intents.ts';
+import { parseAssistantIntent } from './intents';
 
 test('parses a complete create proposal without confusing time with party size', () => {
   assert.deepEqual(parseAssistantIntent('Crea una reserva para Laura 2026-08-23 21:00 para 4'), {

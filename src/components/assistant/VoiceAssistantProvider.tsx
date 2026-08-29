@@ -88,6 +88,64 @@ function needsReply(message: string, inConversation: boolean) {
   return inConversation || message.trim().endsWith('?');
 }
 
+// ===== Style Profile: learns and adapts to each user's conversation style =====
+const STYLE_LS_KEY = 'mm-va-style-v1';
+type StyleProfile = {
+  tone: 'tu' | 'usted' | 'neutral'; // formality
+  verbosity: 'short' | 'normal';     // answer length
+  preferredRoomId?: string;           // room used most often (>= 3 times)
+  roomCounts: Record<string, number>;
+  partySizeCounts: Record<string, number>;
+  interactions: number;
+};
+function defaultStyle(): StyleProfile {
+  return { tone: 'neutral', verbosity: 'normal', roomCounts: {}, partySizeCounts: {}, interactions: 0 };
+}
+function loadStyle(key: string): StyleProfile {
+  if (typeof window === 'undefined') return defaultStyle();
+  try { const s = localStorage.getItem(key); return s ? { ...defaultStyle(), ...JSON.parse(s) } : defaultStyle(); } catch { return defaultStyle(); }
+}
+function saveStyle(key: string, s: StyleProfile) {
+  try { localStorage.setItem(key, JSON.stringify(s)); } catch {}
+}
+function evolveStyle(
+  s: StyleProfile, command: string,
+  extras?: { roomId?: string; partySize?: number }
+): StyleProfile {
+  const n = { ...s, roomCounts: { ...s.roomCounts }, partySizeCounts: { ...s.partySizeCounts }, interactions: s.interactions + 1 };
+  const t = command.toLocaleLowerCase('es-ES');
+  // Tone
+  if (/\b(podría|puede usted|desea|quisiera|me gustaría|le importa)\b/.test(t)) n.tone = 'usted';
+  else if (/\b(ponme|dime|hazlo|dale|oye|mira|pon|dame|haz)\b/.test(t)) n.tone = 'tu';
+  // Verbosity
+  n.verbosity = command.trim().split(/\s+/).length <= 4 ? 'short' : 'normal';
+  // Room preference
+  if (extras?.roomId) {
+    n.roomCounts[extras.roomId] = (n.roomCounts[extras.roomId] ?? 0) + 1;
+    const top = Object.entries(n.roomCounts).sort(([, a], [, b]) => b - a)[0];
+    if (top && top[1] >= 3) n.preferredRoomId = top[0];
+  }
+  // Party size preference
+  if (extras?.partySize) {
+    const k = String(extras.partySize);
+    n.partySizeCounts[k] = (n.partySizeCounts[k] ?? 0) + 1;
+  }
+  return n;
+}
+/** Adaptive confirmation question based on detected style */
+function confirmQ(s: StyleProfile): string {
+  if (s.verbosity === 'short') return '¿Lo hacemos?';
+  if (s.tone === 'usted') return '¿Desea confirmar?';
+  return '¿Lo confirmas?';
+}
+/** Suggest preferred party size (used 2+ times) */
+function suggestedPartySize(s: StyleProfile): number | undefined {
+  const entries = Object.entries(s.partySizeCounts).sort(([, a], [, b]) => b - a);
+  if (!entries.length) return undefined;
+  const [size, count] = entries[0];
+  return count >= 2 ? Number(size) : undefined;
+}
+
 export function VoiceAssistantProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuthPage = ['/login', '/register', '/payment'].some((path) => pathname.startsWith(path));
@@ -106,7 +164,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const startListenRef   = useRef<() => void>(() => {});
   const conversationRef  = useRef<Conversation | null>(null);
   const proposalRef      = useRef<PendingProposal | null>(null);
-  const autoStartedRef   = useRef(false);  // ensures auto-start fires only once
+  const autoStartedRef   = useRef(false);
+  const styleRef         = useRef<StyleProfile>(defaultStyle()); // persisted style profile
+  const styleKeyRef      = useRef('');                           // localStorage key, set after tenantId loads
 
   // ── State ────────────────────────────────────────────────────────────────────
   const [assistantName, setAssistantName] = useState('');
@@ -135,28 +195,12 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         setDraftName(config.assistant_name ?? '');
         setTenantId(config.tenantId);
         setCanConfigure(config.canConfigure);
+        // Load persisted style profile for this tenant
+        styleKeyRef.current = `${STYLE_LS_KEY}-${config.tenantId}`;
+        styleRef.current = loadStyle(styleKeyRef.current);
       }
     }).catch(() => setResponse('No se pudo cargar la configuración del asistente.')).finally(() => setReady(true));
   }, [isAuthPage]);
-
-  // ── Auto-start mic on first load ─────────────────────────────────────────
-  // On web: open widget + start SpeechRecognition immediately.
-  // On native: speak a greeting with expectReply=true so after TTS the service
-  //            automatically enters awaitingCommand mode (no wake phrase needed).
-  useEffect(() => {
-    if (!ready || isAuthPage || !assistantName || autoStartedRef.current) return;
-    autoStartedRef.current = true;
-    setOpen(true);
-    if (Capacitor.isNativePlatform()) {
-      // Small delay to let the WakeWordService initialise TTS fully
-      const t = setTimeout(() => reply('Hola, estoy lista. \u00bfEn qu\u00e9 te ayudo?'), 1400);
-      return () => clearTimeout(t);
-    } else {
-      // Web: open widget and kick off microphone after browser is settled
-      const t = setTimeout(() => startListenRef.current(), 900);
-      return () => clearTimeout(t);
-    }
-  }, [ready, isAuthPage, assistantName, reply]);
 
   useEffect(() => {
     const changed = (e: Event) => setAssistantName((e as CustomEvent<string>).detail);
@@ -202,20 +246,63 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     speak(message, expectReply);
   }, [speak]);
 
+  // ── Auto-start mic on first load ─────────────────────────────────────────
+  // On web: open widget + start SpeechRecognition immediately.
+  // On native: speak a greeting with expectReply=true so after TTS the service
+  //            automatically enters awaitingCommand mode (no wake phrase needed).
+  useEffect(() => {
+    if (!ready || isAuthPage || !assistantName || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    setOpen(true);
+    if (Capacitor.isNativePlatform()) {
+      // Small delay to let the WakeWordService initialise TTS fully
+      const t = setTimeout(() => reply('Hola, estoy lista. \u00bfEn qu\u00e9 te ayudo?'), 1400);
+      return () => clearTimeout(t);
+    } else {
+      // Web: open widget and kick off microphone after browser is settled
+      const t = setTimeout(() => startListenRef.current(), 900);
+      return () => clearTimeout(t);
+    }
+  }, [ready, isAuthPage, assistantName, reply]);
+
   // ── buildProposal ─────────────────────────────────────────────────────────────
   const buildProposal = useCallback(async (intent: AssistantMutationIntent): Promise<PendingProposal> => {
     if (intent.action === 'create_reservation') {
-      return { summary: `Crear reserva para ${intent.guestName}, ${intent.partySize} personas, el ${intent.date} a las ${intent.time}. La mesa se asignará de forma segura al confirmar.`, operation: { action: intent.action, guest_name: intent.guestName, party_size: intent.partySize, date: intent.date, time: intent.time, duration_minutes: intent.durationMinutes } };
+      return {
+        summary: `Crear reserva para ${intent.guestName}, ${intent.partySize} personas, el ${intent.date} a las ${intent.time}. La mesa se asignará al confirmar.`,
+        operation: { action: intent.action, guest_name: intent.guestName, party_size: intent.partySize, date: intent.date, time: intent.time, duration_minutes: intent.durationMinutes },
+      };
     }
     const reservation = await resolveReservation(intent.reference);
+    const who = reservation.guest_name;
+    const when = `el ${reservation.date} a las ${reservation.time.slice(0, 5)}`;
     if (intent.action === 'send_payment_request') {
-      if (!reservation.guest_email) throw new Error(`${reservation.reservation_number} no tiene correo del cliente.`);
-      return { summary: `Enviar a ${reservation.guest_email} una solicitud de ${intent.amount.toFixed(2)} € por ${intent.method === 'bizum' ? 'Bizum' : 'pasarela de pago'} para ${reservation.reservation_number}.`, operation: { action: 'require_prepayment', reservation_id: reservation.id, amount: intent.amount }, paymentRequest: intent.method };
+      if (!reservation.guest_email) throw new Error(`${who} no tiene correo registrado.`);
+      return {
+        summary: `Enviar a ${who} (${reservation.guest_email}) una solicitud de ${intent.amount.toFixed(2)}€ por ${intent.method === 'bizum' ? 'Bizum' : 'pasarela de pago'} para su reserva ${when}.`,
+        operation: { action: 'require_prepayment', reservation_id: reservation.id, amount: intent.amount },
+        paymentRequest: intent.method,
+      };
     }
-    if (intent.action === 'seat_reservation') return { summary: `Sentar la reserva ${reservation.reservation_number}, de ${reservation.guest_name}. La mesa quedará marcada como ocupada.`, operation: { action: intent.action, reservation_id: reservation.id } };
-    if (intent.action === 'cancel_reservation') return { summary: `Cancelar ${reservation.reservation_number}, de ${reservation.guest_name}, el ${reservation.date} a las ${reservation.time.slice(0, 5)}.`, operation: { action: intent.action, reservation_id: reservation.id } };
-    if (intent.action === 'require_prepayment') return { summary: `Solicitar un anticipo de ${intent.amount.toFixed(2)} € para ${reservation.reservation_number}. Stripe generará un enlace de pago; no se capturarán tarjetas aquí.`, operation: { action: intent.action, reservation_id: reservation.id, amount: intent.amount }, prepayment: true };
-    return { summary: `Modificar ${reservation.reservation_number}: ${intent.date ? `fecha ${intent.date}; ` : ''}${intent.time ? `hora ${intent.time}; ` : ''}${intent.partySize ? `${intent.partySize} personas; ` : ''}la asignación se recalculará al confirmar.`, operation: { action: intent.action, reservation_id: reservation.id, date: intent.date, time: intent.time, party_size: intent.partySize } };
+    if (intent.action === 'seat_reservation') return {
+      summary: `Sentar a ${who} ${when}. La mesa quedará marcada como ocupada.`,
+      operation: { action: intent.action, reservation_id: reservation.id },
+    };
+    if (intent.action === 'cancel_reservation') return {
+      summary: `Cancelar la reserva de ${who} ${when}.`,
+      operation: { action: intent.action, reservation_id: reservation.id },
+    };
+    if (intent.action === 'require_prepayment') return {
+      summary: `Solicitar a ${who} un anticipo de ${intent.amount.toFixed(2)}€ para su reserva ${when}. Stripe generará el enlace; no se capturarán tarjetas aquí.`,
+      operation: { action: intent.action, reservation_id: reservation.id, amount: intent.amount },
+      prepayment: true,
+    };
+    // update_reservation
+    const changes = [intent.date ? `fecha ${intent.date}` : '', intent.time ? `hora ${intent.time}` : '', intent.partySize ? `${intent.partySize} personas` : ''].filter(Boolean).join(', ');
+    return {
+      summary: `Modificar la reserva de ${who}: ${changes}. La asignación de mesa se recalculará.`,
+      operation: { action: intent.action, reservation_id: reservation.id, date: intent.date, time: intent.time, party_size: intent.partySize },
+    };
   }, []);
 
   // ── answer ────────────────────────────────────────────────────────────────────
@@ -223,6 +310,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     const command = spokenText?.trim() || transcript.trim();
     if (!command) return;
     setTranscript(command); setOpen(true); setAwaitingReply(false);
+
+    // Update and persist style profile from this command
+    styleRef.current = evolveStyle(styleRef.current, command);
+    if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
 
     // ── Voice confirmation / cancellation of pending proposals ──────────────
     const currentProposal = proposalRef.current;
@@ -253,7 +344,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         const room = rooms.find((r) => norm.includes(r.name.toLocaleLowerCase('es-ES')));
         if (room) { ctx.roomId = room.id; }
         else {
-          conversationRef.current = { kind: 'search_tables', ...ctx };
+          conversationRef.current = { ...ctx };
           reply(`No reconozco ese salón. Puedes decir ${rooms.map((r) => r.name).join(' o ')}.`);
           return;
         }
@@ -267,7 +358,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
       // 3. If partySize still missing, ask for it
       if (!ctx.partySize) {
-        conversationRef.current = { kind: 'search_tables', ...ctx };
+        conversationRef.current = { ...ctx };
         reply('¿Para cuántas personas?');
         return;
       }
@@ -278,6 +369,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       try {
         let roomTables: Table[];
         if (ctx.roomId) {
+          // Save room preference to style
+          styleRef.current = evolveStyle(styleRef.current, command, { roomId: ctx.roomId });
+          if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
           const { data } = await createClient().from('tables').select('*, table_type:table_types(*)').eq('room_id', ctx.roomId).eq('is_active', true);
           roomTables = (data ?? []) as Table[];
         } else {
@@ -285,6 +379,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
         const roomName = ctx.roomId ? rooms.find((r) => r.id === ctx.roomId)?.name : null;
         const ps = ctx.partySize!;
+        // Save party size preference
+        styleRef.current = evolveStyle(styleRef.current, command, { partySize: ps });
+        if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
         const free = roomTables.filter((t) => capacity(t) >= ps && !overlaps(t, reservations, selectedDate, selectedTime));
         const prefix = roomName ? `En ${roomName}, ` : '';
         reply(
@@ -317,8 +414,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           return;
         }
         const r = found.reservation;
-        const next = { summary: `Sentar a ${r.guest_name} (${r.reservation_number}). La mesa quedará como ocupada.`, operation: { action: 'seat_reservation' as const, reservation_id: r.id } };
-        setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+        const next = { summary: `Sentar a ${r.guest_name} a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}. La mesa quedará como ocupada.`, operation: { action: 'seat_reservation' as const, reservation_id: r.id } };
+        setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
       }
       return;
     }
@@ -345,10 +442,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
         const r = found.reservation;
         const actionLabel = nextAction === 'cancel_reservation'
-          ? `Cancelar la reserva de ${r.guest_name} (${r.date} a las ${r.time.slice(0, 5)})`
-          : `Sentar a ${r.guest_name} (${r.reservation_number})`;
+          ? `Cancelar la reserva de ${r.guest_name} del ${r.date} a las ${r.time.slice(0, 5)}`
+          : `Sentar a ${r.guest_name} a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`;
         const next = { summary: actionLabel + '.', operation: { action: nextAction, reservation_id: r.id } };
-        setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+        setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
       }
       return;
     }
@@ -447,10 +544,18 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     } else if (intent.action === 'list_free_tables') {
       // Start search_tables conversation: ask for room (if multiple) then partySize
       const mentionedRoom = rooms.find((r) => command.toLocaleLowerCase('es-ES').includes(r.name.toLocaleLowerCase('es-ES')));
-      const initPartySize = intent.action === 'list_free_tables' ? (intent as { partySize?: number }).partySize : undefined;
-      conversationRef.current = { kind: 'search_tables', roomId: mentionedRoom?.id, partySize: initPartySize };
-      if (rooms.length > 1 && !mentionedRoom) {
+      const initPartySize = (intent as { partySize?: number }).partySize;
+      // Pre-fill preferred room from learned style if user hasn't mentioned one
+      const preferredRoom = !mentionedRoom && styleRef.current.preferredRoomId
+        ? rooms.find((r) => r.id === styleRef.current.preferredRoomId)
+        : undefined;
+      const initRoomId = mentionedRoom?.id ?? preferredRoom?.id;
+      conversationRef.current = { kind: 'search_tables', roomId: initRoomId, partySize: initPartySize };
+      if (rooms.length > 1 && !initRoomId) {
         message = `¿En qué salón? Puedes decir ${rooms.map((r) => r.name).join(', ')}.`;
+      } else if (preferredRoom && !mentionedRoom) {
+        // Auto-selected preferred room, skip room question
+        message = `Entendido, busco en ${preferredRoom.name}. ¿Para cuántas personas?`;
       } else {
         message = '¿Para cuántas personas?';
       }
@@ -479,7 +584,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       }
     } else {
       setWorking(true);
-      try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' ¿Lo confirmas?'; }
+      try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' ' + confirmQ(styleRef.current); }
       catch (error) { message = error instanceof Error ? error.message : 'No pude preparar la operación.'; }
       finally { setWorking(false); }
     }
