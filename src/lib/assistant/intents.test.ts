@@ -47,3 +47,12 @@ test('understands today reservations by voice', () => {
 test('understands free tables by voice', () => {
   assert.deepEqual(parseAssistantIntent('dime qué mesas tengo libres'), { action: 'list_free_tables' });
 });
+
+import { extractTime } from './intents';
+
+test('parses spoken Spanish hours correctly', () => {
+  assert.equal(extractTime('reserva a la una de la tarde'), '13:00');
+  assert.equal(extractTime('a las dos y media'), '14:30');
+  assert.equal(extractTime('las nueve de la noche'), '21:00');
+  assert.equal(extractTime('a las diez de la mañana'), '10:00');
+});

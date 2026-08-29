@@ -76,7 +76,7 @@ public class WakeWordService extends Service implements RecognitionListener {
             ttsReady = true;
             try {
                 AudioAttributes attrs = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build();
                 tts.setAudioAttributes(attrs);

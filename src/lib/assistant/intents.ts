@@ -66,6 +66,86 @@ function extractDate(text: string, now: Date): string | undefined {
   return undefined;
 }
 
+const hourWordMap: Record<string, number> = {
+  una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
+  seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+  dieciseis: 16, dieciséis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
+  veinte: 20, veintiuno: 21, veintidos: 22, veintidós: 22, veintitres: 23, veintitrés: 23,
+};
+
+export function extractTime(raw: string): string | undefined {
+  const norm = raw.toLocaleLowerCase('es-ES').trim();
+
+  // 1. Digital 24h format: "13:30", "21:00", "09.15", "14.00"
+  const digitalMatch = norm.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/);
+  if (digitalMatch) {
+    const h = String(Number(digitalMatch[1])).padStart(2, '0');
+    return `${h}:${digitalMatch[2]}`;
+  }
+
+  // 2. Hour with 'h' format: "13h", "13 h", "13h30"
+  const hMatch = norm.match(/\b([01]?\d|2[0-3])\s*h\s*([0-5]\d)?\b/);
+  if (hMatch) {
+    const h = String(Number(hMatch[1])).padStart(2, '0');
+    const m = hMatch[2] ? hMatch[2] : '00';
+    return `${h}:${m}`;
+  }
+
+  // 3. AM / PM context check
+  const isPM = /\b(de\s+la\s+(tarde|noche)|pm|p\.m\.)\b/.test(norm);
+  const isAM = /\b(de\s+la\s+mañana|am|a\.m\.)\b/.test(norm);
+
+  // 4. Time context requirement to avoid confusing non-time numbers
+  const hasTimeContext =
+    /\b(la|las|a\s+la|a\s+las|sobre\s+la|sobre\s+las|en\s+punto|de\s+la\s+(tarde|noche|mañana)|y\s+(media|cuarto)|menos\s+cuarto)\b/.test(norm) ||
+    /\b\d{1,2}\s*(?:de\s+la\s+(?:tarde|noche|mañana)|pm|am)\b/.test(norm);
+
+  if (!hasTimeContext) return undefined;
+
+  // 5. Match spoken hours
+  const spokenMatch = norm.match(
+    /(?:(?:a|sobre|para)\s+)?(?:la|las|eso\s+de\s+(?:la|las))?\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i,
+  );
+
+  if (spokenMatch) {
+    const rawH = spokenMatch[1].toLocaleLowerCase('es-ES');
+    let h = hourWordMap[rawH] ?? Number(rawH);
+    if (isNaN(h) || h < 0 || h > 23) return undefined;
+
+    let m = 0;
+    const minPart = spokenMatch[2];
+    if (minPart) {
+      if (minPart === 'media') m = 30;
+      else if (minPart === 'cuarto') {
+        if (norm.includes('menos cuarto')) {
+          h = (h - 1 + 24) % 24;
+          m = 45;
+        } else {
+          m = 15;
+        }
+      } else {
+        const numM = Number(minPart);
+        if (!isNaN(numM) && numM >= 0 && numM < 60) m = numM;
+      }
+    }
+
+    // Convert 12h to 24h format for restaurant usage if no explicit AM/PM
+    if (isPM) {
+      if (h < 12) h += 12;
+    } else if (isAM) {
+      if (h === 12) h = 0;
+    } else if (h >= 1 && h <= 11) {
+      // Restaurant heuristics: 1..6 PM (13:00..18:00), 7..11 PM (19:00..23:00)
+      h += 12;
+    }
+
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  return undefined;
+}
+
 export function parseAssistantIntent(raw: string, now = new Date()): AssistantIntent {
   const text = raw.toLocaleLowerCase('es-ES').trim();
   const tableMatch = text.match(/mesa\s+([a-záéíóúüñ0-9-]+)/i);
@@ -73,9 +153,7 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   const partySize = partyMatches.map((match) => extractNumber(match[1])).find((value) => value !== undefined);
   const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
   const date = extractDate(text, now);
-  const exactTime = text.match(/\b([01]\d|2[0-3]):([0-5]\d)\b/)?.[0];
-  const spokenHour = text.match(/(?:a\s+las?|sobre\s+las?)\s+(\d{1,2})(?:\s+y\s+(media|cuarto))?\b/);
-  const time = exactTime ?? (spokenHour ? `${String(Number(spokenHour[1]) + (Number(spokenHour[1]) <= 11 ? 12 : 0)).padStart(2, '0')}:${spokenHour[2] === 'media' ? '30' : spokenHour[2] === 'cuarto' ? '15' : '00'}` : undefined);
+  const time = extractTime(text);
 
   if (/(qu[eé]\s+)?reservas?.*(hoy|esta noche)|reservas?\s+(de\s+)?hoy/.test(text)) {
     return { action: 'list_today_reservations' };
