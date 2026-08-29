@@ -94,12 +94,20 @@ type StyleProfile = {
   tone: 'tu' | 'usted' | 'neutral'; // formality
   verbosity: 'short' | 'normal';     // answer length
   preferredRoomId?: string;           // room used most often (>= 3 times)
+  preferredPartySize?: number;        // party size used most often (>= 2 times)
+  preferredTime?: string;             // time used most often (>= 2 times)
+  frequentGuests: string[];           // guest names used frequently
   roomCounts: Record<string, number>;
   partySizeCounts: Record<string, number>;
+  timeCounts: Record<string, number>;
+  guestCounts: Record<string, number>;
   interactions: number;
 };
 function defaultStyle(): StyleProfile {
-  return { tone: 'neutral', verbosity: 'normal', roomCounts: {}, partySizeCounts: {}, interactions: 0 };
+  return {
+    tone: 'neutral', verbosity: 'normal', frequentGuests: [],
+    roomCounts: {}, partySizeCounts: {}, timeCounts: {}, guestCounts: {}, interactions: 0,
+  };
 }
 function loadStyle(key: string): StyleProfile {
   if (typeof window === 'undefined') return defaultStyle();
@@ -110,15 +118,24 @@ function saveStyle(key: string, s: StyleProfile) {
 }
 function evolveStyle(
   s: StyleProfile, command: string,
-  extras?: { roomId?: string; partySize?: number }
+  extras?: { roomId?: string; partySize?: number; time?: string; guestName?: string }
 ): StyleProfile {
-  const n = { ...s, roomCounts: { ...s.roomCounts }, partySizeCounts: { ...s.partySizeCounts }, interactions: s.interactions + 1 };
+  const n: StyleProfile = {
+    ...s,
+    roomCounts: { ...s.roomCounts },
+    partySizeCounts: { ...s.partySizeCounts },
+    timeCounts: { ...s.timeCounts },
+    guestCounts: { ...s.guestCounts },
+    frequentGuests: [...(s.frequentGuests || [])],
+    interactions: s.interactions + 1,
+  };
   const t = command.toLocaleLowerCase('es-ES');
   // Tone
   if (/\b(podría|puede usted|desea|quisiera|me gustaría|le importa)\b/.test(t)) n.tone = 'usted';
   else if (/\b(ponme|dime|hazlo|dale|oye|mira|pon|dame|haz)\b/.test(t)) n.tone = 'tu';
   // Verbosity
   n.verbosity = command.trim().split(/\s+/).length <= 4 ? 'short' : 'normal';
+
   // Room preference
   if (extras?.roomId) {
     n.roomCounts[extras.roomId] = (n.roomCounts[extras.roomId] ?? 0) + 1;
@@ -129,6 +146,22 @@ function evolveStyle(
   if (extras?.partySize) {
     const k = String(extras.partySize);
     n.partySizeCounts[k] = (n.partySizeCounts[k] ?? 0) + 1;
+    const top = Object.entries(n.partySizeCounts).sort(([, a], [, b]) => b - a)[0];
+    if (top && top[1] >= 2) n.preferredPartySize = Number(top[0]);
+  }
+  // Time preference
+  if (extras?.time) {
+    n.timeCounts[extras.time] = (n.timeCounts[extras.time] ?? 0) + 1;
+    const top = Object.entries(n.timeCounts).sort(([, a], [, b]) => b - a)[0];
+    if (top && top[1] >= 2) n.preferredTime = top[0];
+  }
+  // Frequent guest names
+  if (extras?.guestName && extras.guestName.length >= 2) {
+    const g = extras.guestName.trim().toLocaleLowerCase('es-ES');
+    n.guestCounts[g] = (n.guestCounts[g] ?? 0) + 1;
+    if (n.guestCounts[g] >= 2 && !n.frequentGuests.includes(extras.guestName.trim())) {
+      n.frequentGuests.push(extras.guestName.trim());
+    }
   }
   return n;
 }
@@ -137,13 +170,6 @@ function confirmQ(s: StyleProfile): string {
   if (s.verbosity === 'short') return '¿Lo hacemos?';
   if (s.tone === 'usted') return '¿Desea confirmar?';
   return '¿Lo confirmas?';
-}
-/** Suggest preferred party size (used 2+ times) */
-function suggestedPartySize(s: StyleProfile): number | undefined {
-  const entries = Object.entries(s.partySizeCounts).sort(([, a], [, b]) => b - a);
-  if (!entries.length) return undefined;
-  const [size, count] = entries[0];
-  return count >= 2 ? Number(size) : undefined;
 }
 
 export function VoiceAssistantProvider({ children }: { children: React.ReactNode }) {
@@ -564,7 +590,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
             return;
           }
           const next = { summary: `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}.`, operation: { action: 'create_reservation' as const, guest_name: draft.guestName, party_size: draft.partySize, date: draft.date, time: draft.time, duration_minutes: 90, table_id: table.id } };
-          conversationRef.current = null; setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+          styleRef.current = evolveStyle(styleRef.current, command, { partySize: draft.partySize, time: draft.time, guestName: draft.guestName });
+          if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
+          conversationRef.current = null; setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
         } catch { reply('No he podido comprobar la disponibilidad ahora mismo.'); }
         finally { setWorking(false); }
         return;
