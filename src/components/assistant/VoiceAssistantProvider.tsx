@@ -22,7 +22,16 @@ declare global { interface Window { SpeechRecognition?: new () => Recognition; w
 
 type PendingProposal = { summary: string; operation: AssistantOperation; prepayment?: boolean; paymentRequest?: 'online' | 'bizum' };
 type ReservationDraft = { tableLabel?: string; guestName?: string; date?: string; time?: string; partySize?: number };
-type Conversation = { kind: 'free_tables_room' } | { kind: 'reservation'; draft: ReservationDraft } | { kind: 'seat_reference' };
+type Conversation =
+  | { kind: 'free_tables_room' }
+  | { kind: 'reservation'; draft: ReservationDraft }
+  | { kind: 'seat_reference' }
+  /** Waiting for user to say a reservation reference, then cancel/seat it */
+  | { kind: 'await_reference'; nextAction: 'cancel_reservation' | 'seat_reservation' }
+  /** Step 1 of modify: collect the reservation reference */
+  | { kind: 'await_modify_ref' }
+  /** Step 2 of modify: reference known, ask what to change */
+  | { kind: 'modify_reservation'; reference: string };
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
@@ -222,6 +231,47 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       return;
     }
 
+    // ── await_reference: user needs to tell us the reservation number ──────────
+    if (conversationRef.current?.kind === 'await_reference') {
+      const reference = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
+      if (!reference) { reply('Dime el número de reserva, por ejemplo RES-2026-000123.'); return; }
+      const nextAction = conversationRef.current.nextAction;
+      conversationRef.current = null; setWorking(true);
+      try {
+        const next = await buildProposal({ action: nextAction, reference: reference.toUpperCase() });
+        setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+      } catch (error) { reply(error instanceof Error ? error.message : 'No pude localizar esa reserva.'); }
+      finally { setWorking(false); }
+      return;
+    }
+
+    // ── await_modify_ref: step 1 of modify - collect the reservation number ───
+    if (conversationRef.current?.kind === 'await_modify_ref') {
+      const reference = command.match(/\b(res-\d{4}-\d{6})\b/i)?.[1];
+      if (!reference) { reply('Dime el número de reserva, por ejemplo RES-2026-000123.'); return; }
+      conversationRef.current = { kind: 'modify_reservation', reference: reference.toUpperCase() };
+      reply('¿Qué quieres cambiar? Puedes decir la nueva fecha, hora o número de personas.');
+      return;
+    }
+
+    // ── modify_reservation: step 2 - extract what to change and propose ────────
+    if (conversationRef.current?.kind === 'modify_reservation') {
+      const ref = conversationRef.current.reference;
+      // Try to extract new date/time/partySize from the user's reply
+      const parsed = parseAssistantIntent(`mueve ${ref} ${command}`);
+      if (parsed.action === 'update_reservation' && (parsed.date || parsed.time || parsed.partySize)) {
+        conversationRef.current = null; setWorking(true);
+        try {
+          const next = await buildProposal(parsed);
+          setProposal(next); reply(next.summary + ' ¿Lo confirmas?');
+        } catch (error) { reply(error instanceof Error ? error.message : 'No pude preparar el cambio.'); }
+        finally { setWorking(false); }
+      } else {
+        reply('No entendí qué quieres cambiar. Puedes decir, por ejemplo, "al jueves a las nueve" o "para cinco personas".');
+      }
+      return;
+    }
+
     if (conversationRef.current?.kind === 'reservation') {
       const draft = conversationRef.current.draft;
       const parsed = parseAssistantIntent(command);
@@ -285,10 +335,24 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       // If all fields are already present, process immediately
       if (draft.tableLabel && draft.partySize && draft.date && draft.time && draft.guestName) { void answerRef.current(command); return; }
       message = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : '¿A nombre de quién?';
-    } else if (intent.action === 'help' && /(sienta|sentar|acomoda)/i.test(command)) {
-      conversationRef.current = { kind: 'seat_reference' }; message = 'Claro. Dime el número completo de la reserva que quieres sentar.';
     } else if (intent.action === 'help') {
-      message = 'Puedo decirte las reservas de hoy, qué mesas están libres, recomendar una mesa, y también reservar, modificar o cancelar reservas. ¿Qué necesitas?';
+      // Even when the parser gives up, try to detect a specific intent by keyword
+      if (/(sienta|sentar|acomoda)/i.test(command)) {
+        conversationRef.current = { kind: 'seat_reference' };
+        message = 'Dime el número de la reserva que quieres sentar.';
+      } else if (/(cancela|cancelar|anula|anular)/i.test(command)) {
+        conversationRef.current = { kind: 'await_reference', nextAction: 'cancel_reservation' };
+        message = '¿El número de qué reserva quieres cancelar?';
+      } else if (/(modifica|modificar|cambia|cambiar|mueve|mover|actualiza|actualizar)/i.test(command)) {
+        conversationRef.current = { kind: 'await_modify_ref' };
+        message = '¿El número de qué reserva quieres modificar?';
+      } else if (/(reserva|reservar|quiero|haz|ponme|dame|necesito)/i.test(command)) {
+        // Naked reservation intent without details → start draft flow
+        conversationRef.current = { kind: 'reservation', draft: {} };
+        message = '¿Qué mesa quieres reservar?';
+      } else {
+        message = 'Puedo decirte las reservas de hoy, qué mesas están libres, recomendar una mesa, y también reservar, modificar o cancelar reservas. ¿Qué necesitas?';
+      }
     } else {
       setWorking(true);
       try { const next = await buildProposal(intent); setProposal(next); message = next.summary + ' ¿Lo confirmas?'; }
@@ -305,7 +369,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     let listener: PluginListenerHandle | undefined;
     let cancelled = false;
     WakeWord.addListener('wakeCommand', ({ command }) => {
-      if (command === '__WAKE__') { setOpen(true); reply('Dime, ¿qué deseas?'); return; }
+      if (command === '__WAKE__') { setOpen(true); reply('Dime, ¿en qué te ayudo?'); return; }
       if (command) void answerRef.current(command);
     }).then((h) => { if (cancelled) void h.remove(); else listener = h; });
     WakeWord.start({ name: assistantName }).then(() => setHandsFree(true)).catch((e) => {
