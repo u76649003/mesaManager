@@ -15,6 +15,13 @@ import {
 import { useFloorStore } from '@/stores/useFloorStore';
 import { useReservationStore } from '@/stores/useReservationStore';
 import type { Reservation, Room, Table } from '@/types';
+// ── AI conversational layer ─────────────────────────────────────────────────
+import { processWithAI } from '@/lib/assistant/ai/provider';
+import {
+  createSession, clearSession, isSessionTimedOut, isEndOfSession,
+} from '@/lib/assistant/ai/conversation';
+import { buildSystemPrompt, buildRestaurantContext } from '@/lib/assistant/ai/context';
+import type { ConversationSession, StoreSnapshot } from '@/lib/assistant/ai/types';
 
 type RecognitionEvent = { results: ArrayLike<{ 0: { transcript: string } }> };
 type Recognition = { lang: string; interimResults: boolean; continuous: boolean; start: () => void; stop: () => void; onresult: ((e: RecognitionEvent) => void) | null; onend: (() => void) | null; onerror: (() => void) | null };
@@ -220,6 +227,44 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const selectedDate = useReservationStore((s) => s.selectedDate);
   const selectedTime = useReservationStore((s) => s.selectedTime);
 
+  // ── buildStoreSnapshot — builds a reduced snapshot for the AI ─────────────
+  // Uses closure over store state; called inside answer() to capture current values.
+  const buildStoreSnapshot = useCallback((): StoreSnapshot => ({
+    tables: tables.map((t) => ({
+      id: t.id,
+      label: t.label,
+      status: t.status,
+      capacity: (t.capacity ?? (t as { table_type?: { capacity?: number } }).table_type?.capacity ?? 0),
+      room_id: t.room_id ?? '',
+      is_active: t.is_active,
+    })),
+    rooms: rooms.map((r) => ({ id: r.id, name: r.name })),
+    reservations: reservations.map((r) => ({
+      id: r.id,
+      reservation_number: r.reservation_number,
+      guest_name: r.guest_name,
+      date: r.date,
+      time: r.time,
+      party_size: r.party_size,
+      status: r.status,
+      table_id: r.table_id ?? null,
+    })),
+    todayReservations: todayReservations.map((r) => ({
+      id: r.id,
+      reservation_number: r.reservation_number,
+      guest_name: r.guest_name,
+      date: r.date,
+      time: r.time,
+      party_size: r.party_size,
+      status: r.status,
+      table_id: r.table_id ?? null,
+      table: (r as { table?: { label: string } | null }).table ?? null,
+    })),
+    selectedDate,
+    selectedTime,
+    now: new Date().toISOString(),
+  }), [tables, rooms, reservations, todayReservations, selectedDate, selectedTime]);
+
   // ── Refs (stable across renders, no subscription cost) ──────────────────────
   const recognitionRef   = useRef<Recognition | null>(null);
   const answerRef        = useRef<(spokenText?: string) => Promise<void>>(async () => {});
@@ -230,6 +275,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const autoStartedRef   = useRef(false);
   const styleRef         = useRef<StyleProfile>(defaultStyle()); // persisted style profile
   const styleKeyRef      = useRef('');                           // localStorage key, set after tenantId loads
+  // ── AI session refs ─────────────────────────────────────────────────────────
+  const aiSessionRef     = useRef<ConversationSession | null>(null);  // AI conversation history
+  const isSpeakingRef    = useRef(false);                             // true while TTS is outputting
+  const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // inactivity timer
 
   // ── State ────────────────────────────────────────────────────────────────────
   const [assistantName, setAssistantName] = useState('');
@@ -277,6 +326,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   /**
    * Speak text. If expectReply=true, auto-start the microphone once TTS finishes
    * (web) or tell the Android service to listen (native).
+   * CRITICAL: stops SpeechRecognition before speaking to prevent self-listening.
    */
   const speak = useCallback((text: string, expectReply = false) => {
     if (Capacitor.isNativePlatform()) {
@@ -284,6 +334,11 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       return;
     }
     if (!('speechSynthesis' in window)) return;
+    // ── Stop microphone BEFORE speaking (prevents self-listening) ───────────
+    isSpeakingRef.current = true;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch { /* ignore */ }
+    }
     window.speechSynthesis.cancel();
     window.speechSynthesis.resume();
     const u = new SpeechSynthesisUtterance(text);
@@ -292,6 +347,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     const finish = () => {
       if (done) return;
       done = true;
+      isSpeakingRef.current = false;
       setAwaitingReply(false);
       if (expectReply) {
         setTimeout(() => startListenRef.current(), 400);
@@ -376,6 +432,22 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       operation: { action: intent.action, reservation_id: reservation.id, date: intent.date, time: intent.time, party_size: intent.partySize },
     };
   }, []);
+
+  // ── AI session helpers ────────────────────────────────────────────────────────
+  /** Ensure an AI session exists and is not timed out. */
+  const ensureAISession = useCallback((assistantNameLocal: string): ConversationSession => {
+    if (!aiSessionRef.current || isSessionTimedOut(aiSessionRef.current)) {
+      const snapshot = buildStoreSnapshot();
+      const ctx = buildRestaurantContext(snapshot);
+      const prompt = buildSystemPrompt(assistantNameLocal, ctx);
+      if (aiSessionRef.current) {
+        clearSession(aiSessionRef.current, prompt);
+      } else {
+        aiSessionRef.current = createSession(prompt);
+      }
+    }
+    return aiSessionRef.current!;
+  }, [buildStoreSnapshot]);
 
   // ── answer ────────────────────────────────────────────────────────────────────
   const answer = useCallback(async (spokenText?: string) => {
@@ -733,7 +805,52 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       }
     }
 
-    // ── Single-shot intents ──────────────────────────────────────────────────
+    // ── Try AI first, fall back to parseAssistantIntent ─────────────────────
+    // If AI is available: process with natural language understanding.
+    // If AI fails/unavailable: the existing intent parser handles it identically to before.
+    const snapshot = buildStoreSnapshot();
+    const aiSession = ensureAISession(assistantName);
+    setWorking(true);
+    let aiHandled = false;
+    try {
+      const aiResult = await processWithAI(command, aiSession, snapshot, assistantName);
+      if (aiResult) {
+        aiHandled = true;
+        console.info('[VA] AI handled:', aiResult.kind);
+        if (aiResult.kind === 'end_session') {
+          // Clean up AI session and return to IDLE
+          if (aiSessionRef.current) clearSession(aiSessionRef.current, '');
+          conversationRef.current = null;
+          setWorking(false);
+          reply(aiResult.text);
+          return;
+        }
+        if (aiResult.kind === 'proposal') {
+          const next: PendingProposal = {
+            summary: aiResult.summary,
+            operation: aiResult.operation as AssistantOperation,
+            paymentRequest: aiResult.paymentRequest,
+            prepayment: aiResult.prepayment,
+          };
+          setWorking(false);
+          setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
+          return;
+        }
+        if (aiResult.kind === 'text') {
+          setWorking(false);
+          reply(aiResult.text);
+          return;
+        }
+        // kind === 'unavailable' → fall through to legacy parser
+      }
+    } catch (aiErr) {
+      console.warn('[VA] AI error, using fallback:', aiErr);
+    } finally {
+      if (!aiHandled) setWorking(false);
+    }
+
+    // ── Single-shot intents (fallback / Ollama unavailable) ─────────────────
+    console.info('[VA] Using parseAssistantIntent fallback');
     const intent = parseAssistantIntent(command);
     if (intent.action === 'check_table') {
       const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === intent.tableLabel.toLocaleLowerCase('es-ES'));
@@ -814,7 +931,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       finally { setWorking(false); }
     }
     reply(message);
-  }, [buildProposal, reply, reservations, rooms, selectedDate, selectedTime, tables, todayReservations, transcript]);
+  }, [assistantName, buildProposal, buildStoreSnapshot, ensureAISession, reply, reservations, rooms, selectedDate, selectedTime, tables, todayReservations, transcript]);
   useEffect(() => { answerRef.current = answer; }, [answer]);
 
   // ── Wake-word listener (native only) ──────────────────────────────────────
@@ -861,14 +978,30 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   useEffect(() => { confirmRef.current = confirm; }, [confirm]);
 
   // ── startListening ────────────────────────────────────────────────────────
-  /** Start the Web Speech API recognizer. On result, auto-calls answer(). */
+  /** Start the Web Speech API recognizer. On result, auto-calls answer().
+   * Guards against starting while TTS is speaking to prevent self-listening.
+   */
   const startListening = useCallback(() => {
+    // Do NOT start if TTS is currently speaking (prevents self-listening loop)
+    if (isSpeakingRef.current) {
+      console.info('[VA] Skipping startListening: TTS still speaking');
+      return;
+    }
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Ctor) { setOpen(true); reply('El reconocimiento de voz no está disponible. Escribe la orden.'); return; }
+    // Reuse existing recognition instance if already running
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch { /* ignore */ }
+    }
     const recognition = new Ctor();
     recognition.lang = 'es-ES'; recognition.interimResults = false; recognition.continuous = false;
     recognition.onresult = (e) => {
       const text = e.results[0][0].transcript;
+      // Ignore if TTS is speaking (safety guard)
+      if (isSpeakingRef.current) {
+        console.info('[VA] Ignoring recognition result: TTS speaking');
+        return;
+      }
       setTranscript(text); setOpen(true); setAwaitingReply(false);
       // Auto-process: no button press needed
       void answerRef.current(text);
@@ -876,13 +1009,31 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     recognition.onend = () => setListening(false);
     recognition.onerror = () => {
       setListening(false); setAwaitingReply(false);
-      reply('No he podido escuchar. Puedes escribir la orden o intentarlo de nuevo.');
+      // Only report error if not caused by our own TTS stop
+      if (!isSpeakingRef.current) {
+        reply('No he podido escuchar. Puedes escribir la orden o intentarlo de nuevo.');
+      }
     };
     recognitionRef.current = recognition;
     recognition.start();
     setListening(true); setOpen(true);
   }, [reply]);
   useEffect(() => { startListenRef.current = startListening; }, [startListening]);
+
+  // ── Session inactivity timeout ───────────────────────────────────────────────
+  // If the AI session is open but there's been no activity for SESSION_TIMEOUT_MS,
+  // auto-close it. The legacy conversationRef timeout is separate.
+  useEffect(() => {
+    if (sessionTimeoutRef.current) clearTimeout(sessionTimeoutRef.current);
+    sessionTimeoutRef.current = setTimeout(() => {
+      if (aiSessionRef.current && isSessionTimedOut(aiSessionRef.current)) {
+        console.info('[VA] AI session timed out — clearing');
+        clearSession(aiSessionRef.current, '');
+        conversationRef.current = null;
+      }
+    }, 62_000); // slightly longer than SESSION_TIMEOUT_MS in conversation.ts
+    return () => { if (sessionTimeoutRef.current) clearTimeout(sessionTimeoutRef.current); };
+  });
 
   // ── misc actions ──────────────────────────────────────────────────────────
   const saveName = async () => {
