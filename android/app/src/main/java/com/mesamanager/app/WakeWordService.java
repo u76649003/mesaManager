@@ -234,6 +234,35 @@ public class WakeWordService extends Service implements RecognitionListener {
 
     // === Text-to-Speech ======================================================
 
+    private void requestAudioFocus() {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am != null) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    AudioAttributes attrs = new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build();
+                    android.media.AudioFocusRequest afr = new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(attrs)
+                        .build();
+                    am.requestAudioFocus(afr);
+                } else {
+                    am.requestAudioFocus(null, android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void abandonAudioFocus() {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am != null) {
+                am.abandonAudioFocus(null);
+            }
+        } catch (Exception ignored) {}
+    }
+
     private void doSpeak(String text, boolean expectReply) {
         if (text == null || text.trim().isEmpty()) return;
         if (!ttsReady || tts == null) {
@@ -245,17 +274,21 @@ public class WakeWordService extends Service implements RecognitionListener {
         cancelAwaitingTimeout();
         cancelTtsWatchdog();
         stopListening();
+        requestAudioFocus();
 
         final String uid = "mm-" + (expectReply ? "reply" : "final") + "-" + System.currentTimeMillis();
+        long dynamicWatchdogMs = Math.max(6000L, (text.length() / 8L) * 1000L + 4000L);
         ttsWatchdog = () -> {
             if (speaking) {
                 finishSpeaking(uid);
             }
         };
-        mainHandler.postDelayed(ttsWatchdog, TTS_WATCHDOG_MS);
+        mainHandler.postDelayed(ttsWatchdog, dynamicWatchdogMs);
 
         try {
-            int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, new Bundle(), uid);
+            Bundle params = new Bundle();
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC);
+            int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, uid);
             if (res != TextToSpeech.SUCCESS) {
                 finishSpeaking(uid);
             }
@@ -269,6 +302,7 @@ public class WakeWordService extends Service implements RecognitionListener {
         mainHandler.post(() -> {
             cancelTtsWatchdog();
             speaking = false;
+            abandonAudioFocus();
             stopListening();
             if (stopping) return;
             if (expectReply) {

@@ -12,7 +12,7 @@ import type { AIMessage, AITool, AIToolCall } from '@/lib/assistant/ai/types';
 // ── Config ────────────────────────────────────────────────────
 const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'qwen2.5:3b';
-const TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS ?? 10000);
+const TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS ?? 3000);
 
 // ── Active request map (simple concurrency guard per session) ─
 // In production with multiple replicas, use Redis. For single-server use, a Map suffices.
@@ -38,6 +38,14 @@ interface OllamaResponse {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // If running on Vercel serverless and OLLAMA_URL is localhost, Ollama is guaranteed offline.
+  // Return available: false immediately (0ms delay) so voice assistant falls back instantly.
+  const isVercel = Boolean(process.env.VERCEL || process.env.NEXT_PUBLIC_VERCEL_ENV);
+  const isLocalhost = OLLAMA_URL.includes('localhost') || OLLAMA_URL.includes('127.0.0.1');
+  if (isVercel && isLocalhost) {
+    return NextResponse.json({ available: false, error: 'Ollama is running locally, not on Vercel' });
+  }
+
   let body: ChatRequest;
   try {
     body = await req.json() as ChatRequest;

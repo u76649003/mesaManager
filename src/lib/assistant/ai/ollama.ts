@@ -33,12 +33,21 @@ export async function callAssistantChat(
   signal?: AbortSignal
 ): Promise<AIProviderResponse | null> {
   try {
+    // Client-side 3.5s timeout signal so UI never hangs waiting for AI
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 3500);
+
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : timeoutController.signal;
+
     const response = await fetch('/api/assistant/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
-      signal,
+      signal: combinedSignal,
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.warn('[AI] /api/assistant/chat returned', response.status);
