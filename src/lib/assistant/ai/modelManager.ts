@@ -74,9 +74,7 @@ class ModelManager {
       const status: LocalAIModelStatus = await LocalAI.isModelInstalled();
 
       if (!status.installed) {
-        // Auto-prepare in background so user doesn't have to click anything manually
-        this.emit({ state: 'downloading', capabilities: caps, downloadProgress: 0 });
-        void this.downloadModel();
+        this.emit({ state: 'not_installed', capabilities: caps });
         return this.currentInfo;
       }
 

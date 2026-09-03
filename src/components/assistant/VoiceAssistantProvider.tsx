@@ -1132,34 +1132,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
               </div>
             )}
 
-            {/* Local AI model status */}
-            {Capacitor.isNativePlatform() && localAIInfo && localAIInfo.state !== 'ready' && (
-              <div className="mt-3 rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-slate-300">
-                    {localAIInfo.state === 'unavailable' && '⚠️ IA local no disponible'}
-                    {(localAIInfo.state === 'not_installed' || localAIInfo.state === 'downloading') && `⏳ Activando IA local… ${localAIInfo.downloadProgress ? `${localAIInfo.downloadProgress}%` : ''}`}
-                    {localAIInfo.state === 'loading' && '⏳ Preparando IA…'}
-                    {localAIInfo.state === 'error' && '❌ Error en IA local'}
-                  </span>
-                  {(localAIInfo.state === 'downloading' || localAIInfo.state === 'not_installed') && (
-                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-700">
-                      <div
-                        className="h-full rounded-full bg-violet-500 transition-all"
-                        style={{ width: `${localAIInfo.downloadProgress ?? 10}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-                {localAIInfo.state === 'error' && localAIInfo.error && (
-                  <p className="mt-1 text-red-400">{localAIInfo.error}</p>
-                )}
-              </div>
-            )}
             {/* Footer status */}
             <div className="mt-3 flex justify-between gap-3 text-xs text-slate-400">
               <span>
-                {localAIInfo?.state === 'ready' && <span className="mr-2 text-emerald-400">✨ IA local</span>}
                 {statusLabel}
               </span>
               <div className="flex gap-3">
