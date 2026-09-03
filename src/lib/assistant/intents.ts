@@ -11,7 +11,7 @@ export const assistantIntentSchema = z.discriminatedUnion('action', [
     partySize: z.number().int().positive(),
   }),
   z.object({ action: z.literal('help') }),
-  z.object({ action: z.literal('list_today_reservations') }),
+  z.object({ action: z.literal('list_today_reservations'), tableLabel: z.string().optional() }),
   z.object({ action: z.literal('list_reservations_date'), date: z.iso.date() }),
   z.object({ action: z.literal('list_free_tables') }),
   z.object({ action: z.literal('draft_reservation'), tableLabel: z.string().optional(), guestName: z.string().optional(), date: z.iso.date().optional(), time: z.string().optional(), partySize: z.number().int().positive().optional() }),
@@ -179,8 +179,8 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   const date = extractDate(text, now);
   const time = extractTime(text);
 
-  if (/(qu[eé]\s+)?reservas?.*(hoy|esta noche)|reservas?\s+(de\s+)?hoy/.test(text)) {
-    return { action: 'list_today_reservations' };
+  if (/(qu[eé]\s+)?reservas?.*(hoy|esta noche)|reservas?\s+(de\s+)?hoy|qui[eé]n\s+viene\s+hoy/i.test(text)) {
+    return { action: 'list_today_reservations', ...(tableLabel ? { tableLabel } : {}) };
   }
   if (date && /reservas?/.test(text) && /(qué|que|cu[aá]les|tengo|hay|dime|ver)/.test(text)) return { action: 'list_reservations_date', date };
   if (/(qu[eé]\s+)?mesas?.*(libres?|disponibles?)|(libres?|disponibles?).*mesas?/.test(text)) {

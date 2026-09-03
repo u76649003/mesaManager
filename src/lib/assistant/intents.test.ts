@@ -42,6 +42,7 @@ test('prepares a Bizum email request with explicit amount and reservation', () =
 
 test('understands today reservations by voice', () => {
   assert.deepEqual(parseAssistantIntent('qué reservas tengo hoy'), { action: 'list_today_reservations' });
+  assert.deepEqual(parseAssistantIntent('dime las reservas para hoy de la mesa 1'), { action: 'list_today_reservations', tableLabel: '1' });
 });
 
 test('understands free tables by voice', () => {

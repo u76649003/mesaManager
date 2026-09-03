@@ -823,7 +823,15 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       message = best ? `La mejor opción para ${intent.partySize} personas es la mesa ${best.label}. ¿Quieres que haga la reserva?` : `No veo ninguna mesa libre para ${intent.partySize} personas ahora mismo.`;
     } else if (intent.action === 'list_today_reservations') {
       const active = todayReservations.filter((r) => !['cancelled', 'no_show'].includes(r.status));
-      message = active.length ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'}` : 'Hoy no tienes reservas activas.';
+      const tbl = intent.tableLabel;
+      if (tbl) {
+        const filtered = active.filter((r) => r.table?.label.toLocaleLowerCase('es-ES') === tbl.toLocaleLowerCase('es-ES'));
+        message = filtered.length
+          ? `Para la mesa ${tbl} hoy tienes ${filtered.length} reserva${filtered.length > 1 ? 's' : ''}: ${filtered.map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}`).join('. ')}.`
+          : `Para la mesa ${tbl} no hay reservas programadas hoy.`;
+      } else {
+        message = active.length ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'}` : 'Hoy no tienes reservas activas.';
+      }
     } else if (intent.action === 'list_reservations_date') {
       setWorking(true);
       try {
