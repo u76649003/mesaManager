@@ -56,3 +56,10 @@ test('parses spoken Spanish hours correctly', () => {
   assert.equal(extractTime('las nueve de la noche'), '21:00');
   assert.equal(extractTime('a las diez de la mañana'), '10:00');
 });
+
+test('parses colloquial terrace and table time phrases correctly', () => {
+  const result = parseAssistantIntent('eh la terraza la uno a las una', new Date(2026, 7, 22));
+  assert.equal(result.action, 'draft_reservation');
+  assert.equal(result.tableLabel, '1');
+  assert.equal(result.time, '13:00');
+});

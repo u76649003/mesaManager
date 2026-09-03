@@ -334,7 +334,6 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const speak = useCallback((text: string, expectReply = false) => {
     if (Capacitor.isNativePlatform()) {
       void WakeWord.speak({ text, expectReply });
-      return;
     }
     if (!('speechSynthesis' in window)) return;
     // ── Stop microphone BEFORE speaking (prevents self-listening) ───────────

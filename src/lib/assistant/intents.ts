@@ -150,9 +150,29 @@ export function extractTime(raw: string): string | undefined {
   return undefined;
 }
 
+function extractTableLabel(text: string): string | undefined {
+  const directMesa = text.match(/\bmesa\s+([a-záéíóúüñ0-9-]+)\b/i);
+  if (directMesa) return normalizeTableLabel(directMesa[1]);
+
+  const roomTable = text.match(/\b(?:terraza|interior|sala|comedor|bar|vip)\s+(?:la\s+)?([a-záéíóúüñ0-9-]+)\b/i);
+  if (roomTable) return normalizeTableLabel(roomTable[1]);
+
+  const laNum = text.match(/\b(?:la|n[úu]mero|num)\s+([a-záéíóúüñ0-9]+)\b/i);
+  if (laNum) return normalizeTableLabel(laNum[1]);
+
+  return undefined;
+}
+
+function normalizeTableLabel(raw: string): string {
+  const norm = raw.toLowerCase().trim();
+  const num = hourWordMap[norm];
+  if (num !== undefined) return String(num);
+  return norm;
+}
+
 export function parseAssistantIntent(raw: string, now = new Date()): AssistantIntent {
   const text = raw.toLocaleLowerCase('es-ES').trim();
-  const tableMatch = text.match(/mesa\s+([a-záéíóúüñ0-9-]+)/i);
+  const tableLabel = extractTableLabel(text);
   const partyMatches = [...text.matchAll(/(?:para|somos)\s+([a-záéíóúüñ0-9]+)/gi)];
   const partySize = partyMatches.map((match) => extractNumber(match[1])).find((value) => value !== undefined);
   const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
@@ -186,20 +206,11 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
     const name = text.match(/(?:para|a nombre de)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el\s+)?20\d{2}-|\s+para\s+\d|$)/i)?.[1]?.trim();
     if (name) return assistantIntentSchema.parse({ action: 'create_reservation', guestName: name, date, time, partySize });
   }
-  // Broad reservation intent: with OR without details yet
-  // Catches: "quiero reservar", "necesito una mesa", "ponme una reserva", "haz una reserva", etc.
-  const bareReservationIntent =
-    /(reservar?|crea|crear|haz|nueva)\b/.test(text) ||
-    (/\b(quiero|necesito|ponme|dame|hacer?)\b/.test(text) && /\breserva\b|\bmesa\b/.test(text));
-  if (bareReservationIntent) {
-    const name = text.match(/(?:a nombre de|nombre)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el|para|a las?)\b|$)/i)?.[1]?.trim();
-    return { action: 'draft_reservation', tableLabel: tableMatch?.[1], guestName: name, date, time, partySize };
-  }
 
-  if (tableMatch && /(libre|disponible|cabe|puedo|reservar)/.test(text)) {
+  if (tableLabel && /(libre|disponible|cabe|puedo|reservar)/.test(text)) {
     return assistantIntentSchema.parse({
       action: 'check_table',
-      tableLabel: tableMatch[1],
+      tableLabel,
       partySize,
     });
   }
@@ -207,6 +218,26 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   if (/(mejor|recomienda|recomiendas|qué mesa|que mesa|dónde pongo|donde pongo)/.test(text)) {
     const size = partySize ?? extractNumber(text);
     if (size) return assistantIntentSchema.parse({ action: 'recommend_table', partySize: size });
+  }
+
+  // Conversational reservation intent with or without explicit verb
+  const hasReservationParams =
+    Boolean(tableLabel) ||
+    Boolean(time) ||
+    Boolean(partySize) ||
+    /(reservar?|crea|crear|haz|nueva|ponme|dame|hacer?|reserva|mesa|terraza|comedor|sala|interior)\b/.test(text);
+
+  if (hasReservationParams) {
+    const nameMatch = text.match(/(?:a nombre de|nombre)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el|para|a las?|en)\b|$)/i)?.[1]?.trim();
+    const cleanName = (nameMatch && !['terraza', 'sala', 'comedor', 'interior', 'hoy', 'mañana', 'uno', 'dos', 'tres'].includes(nameMatch.toLowerCase())) ? nameMatch : undefined;
+    return {
+      action: 'draft_reservation',
+      tableLabel,
+      guestName: cleanName,
+      date: date ?? localIso(now),
+      time,
+      partySize,
+    };
   }
 
   return { action: 'help' };
