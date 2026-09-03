@@ -8,6 +8,11 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WakeWordPlugin.class);
         registerPlugin(LocalAIPlugin.class);
         super.onCreate(savedInstanceState);
+        try {
+            if (this.bridge != null && this.bridge.getWebView() != null) {
+                this.bridge.getWebView().clearCache(true);
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override
