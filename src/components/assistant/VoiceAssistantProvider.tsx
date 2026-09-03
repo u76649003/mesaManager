@@ -910,11 +910,35 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           conversationRef.current = { kind: 'search_reservation_query' };
           message = '¿Qué reserva quieres buscar? Dime el nombre del cliente o la mesa.';
         }
+      } else if (/(env[ií]a|solicita|cobra|pago|bizum|pasarela)/i.test(command) && /(bizum|pasarela|tarjeta|anticipo|pago)/i.test(command)) {
+        const isBizum = /bizum/i.test(command);
+        const amtMatch = command.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:€|euros?)?/);
+        const amt = amtMatch ? Number(amtMatch[1].replace(',', '.')) : undefined;
+        const found = findReservation(command, [...reservations, ...todayReservations], tables);
+        if (found && !('ambiguous' in found)) {
+          const r = found.reservation;
+          if (!r.guest_email) {
+            message = `La reserva de ${r.guest_name} no tiene correo electrónico registrado para enviarle la solicitud.`;
+          } else {
+            const amountToCharge = amt ?? r.prepayment_amount ?? 15;
+            const methodLabel = isBizum ? 'Bizum' : 'pasarela de pago';
+            const summary = `Enviar a ${r.guest_name} (${r.guest_email}) una solicitud de ${amountToCharge.toFixed(2)}€ por ${methodLabel} para su reserva el ${r.date} a las ${r.time.slice(0, 5)}.`;
+            const next: PendingProposal = {
+              summary,
+              operation: { action: 'require_prepayment', reservation_id: r.id, amount: amountToCharge },
+              paymentRequest: isBizum ? 'bizum' : 'online',
+            };
+            setProposal(next);
+            message = `${summary} ¿Lo confirmas?`;
+          }
+        } else {
+          message = '¿A qué cliente o reserva quieres enviar la solicitud de pago por Bizum o pasarela?';
+        }
       } else if (/(reserva|reservar|quiero|haz|ponme|dame|necesito)/i.test(command)) {
         conversationRef.current = { kind: 'reservation', draft: {} };
-        message = '¿Qué mesa quieres reservar?';
+        message = '¿A nombre de quién pongo la reserva?';
       } else {
-        message = 'Puedo decirte las reservas de hoy, qué mesas están libres para X personas, recomendar una mesa, y también reservar, modificar o cancelar. ¿Qué necesitas?';
+        message = 'Puedo decirte las reservas de hoy, qué mesas están libres, gestionar cobros por Bizum o pasarela, y reservar, modificar o cancelar. ¿Qué necesitas?';
       }
     } else {
       setWorking(true);
