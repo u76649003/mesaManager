@@ -9,4 +9,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LocalAIPlugin.class);
         super.onCreate(savedInstanceState);
     }
+
+    @Override
+    public void onDestroy() {
+        try {
+            android.content.Intent serviceIntent = new android.content.Intent(this, WakeWordService.class);
+            stopService(serviceIntent);
+            LocalAIEngine.getInstance().unloadModel();
+        } catch (Exception ignored) {}
+        super.onDestroy();
+    }
 }

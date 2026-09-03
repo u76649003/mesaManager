@@ -133,13 +133,17 @@ public class WakeWordService extends Service implements RecognitionListener {
 
     @Override public void onTaskRemoved(Intent rootIntent) {
         stopping = true; cancelAwaitingTimeout(); cancelTtsWatchdog(); stopListening();
-        stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+        if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) {} tts = null; }
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        LocalAIEngine.getInstance().unloadModel();
+        stopSelf();
         super.onTaskRemoved(rootIntent);
     }
 
     @Override public void onDestroy() {
         stopping = true; cancelAwaitingTimeout(); cancelTtsWatchdog(); stopListening();
-        if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) {} tts = null; }
+        LocalAIEngine.getInstance().unloadModel();
         super.onDestroy();
     }
 
