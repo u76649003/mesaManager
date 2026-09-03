@@ -898,7 +898,22 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       const draft = conversationRef.current.draft;
       // If all fields are already present, process immediately
       if (draft.tableLabel && draft.partySize && draft.date && draft.time && draft.guestName) { void answerRef.current(command); return; }
-      message = !draft.tableLabel ? '¿Qué mesa quieres reservar?' : !draft.partySize ? '¿Para cuántas personas?' : !draft.date ? '¿Para qué día?' : !draft.time ? '¿A qué hora?' : '¿A nombre de quién?';
+
+      const details: string[] = [];
+      if (draft.guestName) details.push(`a nombre de ${draft.guestName}`);
+      if (draft.time) details.push(`para las ${draft.time}`);
+      if (draft.date) details.push(`el ${draft.date}`);
+      if (draft.partySize) details.push(`para ${draft.partySize} personas`);
+      if (draft.tableLabel) details.push(`en mesa ${draft.tableLabel}`);
+
+      const prefix = details.length > 0 ? `Tomada nota: ${details.join(', ')}. ` : '';
+      const promptText = !draft.tableLabel ? (rooms.length > 1 ? `¿En qué salón o mesa quieres reservar?` : '¿En qué mesa te gustaría?')
+        : !draft.partySize ? '¿Para cuántas personas?'
+        : !draft.date ? '¿Para qué día?'
+        : !draft.time ? '¿A qué hora?'
+        : '¿A nombre de quién?';
+
+      message = `${prefix}${promptText}`;
     } else if (intent.action === 'help') {
       // Even when the parser gives up, try to detect a specific intent by keyword
       if (/(sienta|sentar|acomoda)/i.test(command)) {
@@ -943,7 +958,11 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     let cancelled = false;
     WakeWord.addListener('wakeCommand', ({ command }) => {
       if (command === '__WAKE__') { setOpen(true); reply('Dime, ¿en qué te ayudo?'); return; }
-      if (command) void answerRef.current(command);
+      if (command) {
+        setTranscript(command);
+        setOpen(true);
+        void answerRef.current(command);
+      }
     }).then((h) => { if (cancelled) void h.remove(); else listener = h; });
     WakeWord.start({ name: assistantName }).then(() => setHandsFree(true)).catch((e) => {
       setHandsFree(false);
