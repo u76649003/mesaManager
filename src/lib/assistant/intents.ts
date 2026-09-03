@@ -40,7 +40,7 @@ const numberWords: Record<string, number> = {
   dieciseis: 16, dieciséis: 16, veinte: 20,
 };
 
-function extractNumber(text: string): number | undefined {
+export function extractNumber(text: string): number | undefined {
   const digit = text.match(/\b(\d{1,3})\b/);
   if (digit) return Number(digit[1]);
   const word = Object.entries(numberWords).find(([key]) => text.includes(key));

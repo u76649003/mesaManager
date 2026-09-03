@@ -7,7 +7,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import { createClient } from '@/lib/supabase/client';
 import { createPrepaymentSession } from '@/app/actions/payments';
 import { sendAssistantPaymentRequest } from '@/app/actions/emails';
-import { parseAssistantIntent, type AssistantMutationIntent } from '@/lib/assistant/intents';
+import { parseAssistantIntent, extractNumber, extractTime, type AssistantMutationIntent } from '@/lib/assistant/intents';
 import {
   executeAssistantOperation, loadAssistantConfiguration, resolveReservation,
   saveAssistantConfiguration, type AssistantOperation,
@@ -672,94 +672,53 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       const parsed = parseAssistantIntent(command);
       if (parsed.action === 'draft_reservation') {
         Object.assign(draft, Object.fromEntries(Object.entries(parsed).filter(([k, v]) => k !== 'action' && v !== undefined)));
-      } else if (!draft.tableLabel) {
-        const rawLabel = command.replace(/^mesa\s+/i, '').trim();
-        const matchedTable = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === rawLabel.toLocaleLowerCase('es-ES') || t.label.toLocaleLowerCase('es-ES') === command.trim().toLocaleLowerCase('es-ES'));
-        if (matchedTable) {
-          draft.tableLabel = matchedTable.label;
-        } else {
-          conversationRef.current = null;
-        }
-      } else if (!draft.partySize) {
-        const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${command}`);
-        if (f.action === 'draft_reservation' && f.partySize) draft.partySize = f.partySize;
-        else conversationRef.current = null;
-      } else if (!draft.date) {
-        const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${command}`);
-        if (f.action === 'draft_reservation' && f.date) draft.date = f.date;
-        else conversationRef.current = null;
-      } else if (!draft.time) {
-        const f = parseAssistantIntent(`reserva mesa ${draft.tableLabel} para ${draft.partySize} ${draft.date} a las ${command}`);
-        if (f.action === 'draft_reservation' && f.time) draft.time = f.time;
-        else conversationRef.current = null;
-      } else if (!draft.guestName) {
-        const cleanedName = command.replace(/^(a nombre de|nombre)\s+/i, '').trim();
-        if (cleanedName && !/\b(qu[eé]|cu[aá]l|d[oó]nde|cu[aá]ntas?|hay|mesas?|cancela|ayuda)\b/i.test(cleanedName)) {
-          draft.guestName = cleanedName;
-        } else {
-          conversationRef.current = null;
-        }
-      } else if (!draft.askedNotes) {
-        const isNoNote = /^(no|ninguna|sin\s+notas?|nada|sin\s+nota)$/i.test(command.trim());
-        if (!isNoNote) {
-          draft.notes = command.trim();
-        }
-        draft.askedNotes = true;
-      } else if (!draft.askedPayment) {
-        const isNoPay = /^(no|ningun[ao]|sin\s+pago|sin\s+anticipo|nada|sin\s+anticipos)$/i.test(command.trim());
-        if (isNoPay) {
-          draft.paymentMethod = 'none';
-          draft.askedPayment = true;
-        } else {
-          const isBizum = /bizum/i.test(command);
-          const isOnline = /(pasarela|tarjeta|online|email|correo)/i.test(command);
-          const amtMatch = command.match(/(\d+(?:[.,]\d{1,2})?)/);
-          if (isBizum) draft.paymentMethod = 'bizum';
-          else if (isOnline) draft.paymentMethod = 'online';
+      }
 
-          if (amtMatch) {
-            draft.paymentAmount = Number(amtMatch[1].replace(',', '.'));
-            draft.askedPayment = true;
-          } else if (isBizum || isOnline) {
-            reply(`¿De cuántos euros de anticipo por ${isBizum ? 'Bizum' : 'pasarela de pago'}?`);
-            return;
-          } else {
-            draft.paymentMethod = 'none';
-            draft.askedPayment = true;
-          }
+      // Robust field extraction from user utterance
+      if (!draft.partySize) {
+        const num = extractNumber(command);
+        if (num && num >= 1 && num <= 30) draft.partySize = num;
+      }
+      if (!draft.time) {
+        const t = extractTime(command);
+        if (t) draft.time = t;
+      }
+      if (!draft.guestName) {
+        const nameMatch = command.match(/(?:a nombre de|nombre)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el|para|a las?|en)\b|$)/i)?.[1]?.trim();
+        const rawClean = command.replace(/^(a nombre de|nombre|para)\s+/i, '').trim();
+        const candidate = nameMatch || rawClean;
+        if (candidate && !/^\d+$/.test(candidate) && !/\b(qu[eé]|cu[aá]l|d[oó]nde|cu[aá]ntas?|hay|mesas?|cancela|ayuda|hoy|mañana|terraza|interior|sala|comedor|personas?)\b/i.test(candidate)) {
+          draft.guestName = candidate;
         }
       }
 
-      const parsedCmd = parseAssistantIntent(command);
-      const cmdPartySize = 'partySize' in parsedCmd ? (parsedCmd.partySize as number | undefined) : undefined;
-      const isAskingOptimalRoom = /\b(en\s+cu[aá]l|qu[eé]\s+sal[oó]n|d[oó]nde|cu[aá]les|mejor\s+sal[oó]n|opci[oó]n\s+m[aá]s\s+[oó]ptima|hay\s+disponibles?|aconsejas?|recomiendas?)\b/i.test(command);
-      if (isAskingOptimalRoom && (draft.partySize || cmdPartySize)) {
-        const ps = draft.partySize ?? cmdPartySize ?? 4;
-        draft.partySize = ps;
-        const optimal = evaluateOptimalRoomAndTable(ps, rooms, tables, reservations, draft.date || selectedDate, draft.time || selectedTime);
+      // Step-by-step missing field prompts
+      if (!draft.guestName) {
+        reply('¿A nombre de quién pongo la reserva?');
+        return;
+      }
+      if (!draft.partySize) {
+        reply(`Anotado a nombre de ${draft.guestName}. ¿Para cuántas personas será la reserva?`);
+        return;
+      }
+      if (!draft.time) {
+        reply(`Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas. ¿A qué hora vienen?`);
+        return;
+      }
+      if (!draft.tableLabel) {
+        const optimal = evaluateOptimalRoomAndTable(draft.partySize, rooms, tables, reservations, draft.date || selectedDate, draft.time);
         if (optimal) {
           draft.tableLabel = optimal.bestTable.label;
-          const otherRooms = optimal.roomSummaries.filter(r => r.room.id !== optimal.bestRoom.id);
-          const otherStr = otherRooms.length ? ` En ${otherRooms[0].room.name} también tienes disponible la mesa ${otherRooms[0].bestTable.label}.` : '';
-          reply(`La opción más óptima para ${ps} personas es en el salón **${optimal.bestRoom.name}**, mesa ${optimal.bestTable.label} (capacidad ${capacity(optimal.bestTable)}).${otherStr} ¿La reservamos a nombre de quién?`);
-          return;
         } else {
-          reply(`No veo mesas disponibles para ${ps} personas en ningún salón en este momento.`);
+          const prompt = rooms.length > 1
+            ? `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas a las ${draft.time}. ¿En qué salón te gustaría? (${rooms.map(r => r.name).join(', ')})`
+            : `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas a las ${draft.time}. ¿Qué mesa prefieres?`;
+          reply(prompt);
           return;
         }
       }
 
-      if (conversationRef.current?.kind === 'reservation') {
-        const missing = !draft.tableLabel ? (rooms.length > 1 ? `¿En qué salón te gustaría reservar? (Puedes decir ${rooms.map(r => r.name).join(', ')}, o preguntarme en cuál hay disponibles)` : '¿Qué mesa quieres reservar?')
-          : !draft.partySize ? '¿Para cuántas personas?'
-          : !draft.date ? '¿Para qué día?'
-          : !draft.time ? '¿A qué hora?'
-          : !draft.guestName ? '¿A nombre de quién?'
-          : !draft.askedNotes ? '¿Quieres añadir alguna nota o petición especial a la reserva? (O di no)'
-          : !draft.askedPayment ? '¿Quieres solicitar pago de anticipo por Bizum o por pasarela de pago? (O di no)'
-          : null;
-
-        if (missing) { reply(missing); return; }
+      if (!draft.date) draft.date = new Date().toISOString().split('T')[0];
 
         const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
         if (!table) { const bad = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${bad}. ¿Qué mesa quieres reservar?`); return; }
@@ -805,7 +764,6 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         finally { setWorking(false); }
         return;
       }
-    }
 
     // ── Try AI first, fall back to parseAssistantIntent ─────────────────────
     // If AI is available: process with natural language understanding.
