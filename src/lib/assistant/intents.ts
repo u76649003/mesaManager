@@ -52,7 +52,7 @@ function localIso(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function extractDate(text: string, now: Date): string | undefined {
+export function extractDate(text: string, now: Date = new Date()): string | undefined {
   const iso = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1]; if (iso) return iso;
   const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})(?:[\/-](20\d{2}))?\b/);
   if (numeric) return localIso(new Date(Number(numeric[3] ?? now.getFullYear()), Number(numeric[2]) - 1, Number(numeric[1])));

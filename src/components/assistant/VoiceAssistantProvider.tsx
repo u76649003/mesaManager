@@ -7,7 +7,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import { createClient } from '@/lib/supabase/client';
 import { createPrepaymentSession } from '@/app/actions/payments';
 import { sendAssistantPaymentRequest } from '@/app/actions/emails';
-import { parseAssistantIntent, extractNumber, extractTime, type AssistantMutationIntent } from '@/lib/assistant/intents';
+import { parseAssistantIntent, extractNumber, extractTime, extractDate, type AssistantMutationIntent } from '@/lib/assistant/intents';
 import {
   executeAssistantOperation, loadAssistantConfiguration, resolveReservation,
   saveAssistantConfiguration, type AssistantOperation,
@@ -688,6 +688,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         const num = extractNumber(command);
         if (num && num >= 1 && num <= 30) draft.partySize = num;
       }
+      if (!draft.date) {
+        const d = extractDate(command);
+        if (d) draft.date = d;
+      }
       if (!draft.time) {
         const t = extractTime(command);
         if (t) draft.time = t;
@@ -701,7 +705,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
       }
 
-      // Step-by-step missing field prompts
+      // Step-by-step missing field prompts (never auto-assign date!)
       if (!draft.guestName) {
         reply('¿A nombre de quién pongo la reserva?');
         return;
@@ -710,24 +714,26 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         reply(`Anotado a nombre de ${draft.guestName}. ¿Para cuántas personas será la reserva?`);
         return;
       }
+      if (!draft.date) {
+        reply(`Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas. ¿Para qué fecha o día es la reserva? (Puedes decir hoy, mañana, el viernes...)`);
+        return;
+      }
       if (!draft.time) {
-        reply(`Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas. ¿A qué hora vienen?`);
+        reply(`Anotado a nombre de ${draft.guestName} para el ${draft.date}. ¿A qué hora vienen?`);
         return;
       }
       if (!draft.tableLabel) {
-        const optimal = evaluateOptimalRoomAndTable(draft.partySize, rooms, tables, reservations, draft.date || selectedDate, draft.time);
+        const optimal = evaluateOptimalRoomAndTable(draft.partySize, rooms, tables, reservations, draft.date, draft.time);
         if (optimal) {
           draft.tableLabel = optimal.bestTable.label;
         } else {
           const prompt = rooms.length > 1
-            ? `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas a las ${draft.time}. ¿En qué salón te gustaría? (${rooms.map(r => r.name).join(', ')})`
-            : `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas a las ${draft.time}. ¿Qué mesa prefieres?`;
+            ? `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas el ${draft.date} a las ${draft.time}. ¿En qué salón te gustaría? (${rooms.map(r => r.name).join(', ')})`
+            : `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas el ${draft.date} a las ${draft.time}. ¿Qué mesa prefieres?`;
           reply(prompt);
           return;
         }
       }
-
-      if (!draft.date) draft.date = new Date().toISOString().split('T')[0];
 
         const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
         if (!table) { const bad = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${bad}. ¿Qué mesa quieres reservar?`); return; }
