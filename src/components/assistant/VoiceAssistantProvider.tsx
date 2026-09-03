@@ -461,6 +461,15 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     styleRef.current = evolveStyle(styleRef.current, command);
     if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
 
+    // ── Reset conversation state when starting with "Ey" wake phrase ───────────
+    const isExplicitEyWake = /^\b(ey|hola)\b/i.test(command) || (assistantName && command.toLocaleLowerCase('es-ES').includes(`ey ${assistantName.toLocaleLowerCase('es-ES')}`));
+    if (isExplicitEyWake) {
+      conversationRef.current = null;
+      if (aiSessionRef.current) {
+        clearSession(aiSessionRef.current, '');
+      }
+    }
+
     // ── Voice confirmation / cancellation of pending proposals ──────────────
     const currentProposal = proposalRef.current;
     if (currentProposal) {
@@ -923,6 +932,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     let listener: PluginListenerHandle | undefined;
     let cancelled = false;
     WakeWord.addListener('wakeCommand', ({ command }) => {
+      conversationRef.current = null;
+      if (aiSessionRef.current) {
+        clearSession(aiSessionRef.current, '');
+      }
       if (command === '__WAKE__') { setOpen(true); reply('Dime, ¿en qué te ayudo?'); return; }
       if (command) {
         setTranscript(command);
