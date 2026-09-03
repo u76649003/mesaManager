@@ -74,12 +74,20 @@ class ModelManager {
       const status: LocalAIModelStatus = await LocalAI.isModelInstalled();
 
       if (!status.installed) {
-        this.emit({ state: 'not_installed', capabilities: caps });
+        // Auto-prepare in background so user doesn't have to click anything manually
+        this.emit({ state: 'downloading', capabilities: caps, downloadProgress: 0 });
+        void this.downloadModel();
+        return this.currentInfo;
+      }
+
+      if (!localLlamaProvider.available && this.currentInfo.state !== 'loading') {
+        this.emit({ state: 'loading', sizeMb: status.sizeMb, capabilities: caps });
+        void this.loadModel();
         return this.currentInfo;
       }
 
       this.emit({
-        state: localLlamaProvider.available ? 'ready' : 'loading',
+        state: 'ready',
         sizeMb: status.sizeMb,
         capabilities: caps,
       });
