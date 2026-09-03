@@ -103,10 +103,14 @@ export function extractTime(raw: string): string | undefined {
 
   if (!hasTimeContext) return undefined;
 
-  // 5. Match spoken hours
-  const spokenMatch = norm.match(
-    /(?:(?:a|sobre|para)\s+)?(?:la|las|eso\s+de\s+(?:la|las))?\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i,
-  );
+  // 5. Match spoken hours (prioritize explicit time indicators like 'a las' or 'la/las')
+  const spokenMatch =
+    norm.match(
+      /(?:a\s+las?|sobre\s+las?|eso\s+de\s+las?|\bla\b|\blas\b)\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i,
+    ) ||
+    norm.match(
+      /(?:(?:a|sobre)\s+)?(?:la|las|eso\s+de\s+(?:la|las))?\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i,
+    );
 
   if (spokenMatch) {
     const rawH = spokenMatch[1].toLocaleLowerCase('es-ES');
