@@ -705,6 +705,35 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
       }
 
+      // Smart Learning Fast-Path: Auto-fill learned preferences from guest history or user style profile
+      let learnedNotice = '';
+      if (draft.guestName) {
+        const normName = draft.guestName.toLocaleLowerCase('es-ES').trim();
+        const pastRes = [...reservations, ...todayReservations].find(
+          (r) => r.guest_name?.toLocaleLowerCase('es-ES').trim() === normName || r.guest_name?.toLocaleLowerCase('es-ES').includes(normName)
+        );
+        if (pastRes) {
+          if (!draft.partySize && pastRes.party_size) {
+            draft.partySize = pastRes.party_size;
+            learnedNotice += ` (${pastRes.party_size} personas`;
+          }
+          if (!draft.time && pastRes.time) {
+            const formattedTime = pastRes.time.slice(0, 5);
+            draft.time = formattedTime;
+            learnedNotice += learnedNotice ? ` a las ${formattedTime}` : ` (${formattedTime}`;
+          }
+          if (learnedNotice) learnedNotice += ' habitualmente)';
+        }
+      }
+
+      // Fallback to user restaurant style profile defaults if fast reservation requested
+      if (!draft.partySize && styleRef.current.preferredPartySize && /(r[aá]pid|habitual|f[aá]cil)/i.test(command)) {
+        draft.partySize = styleRef.current.preferredPartySize;
+      }
+      if (!draft.time && styleRef.current.preferredTime && /(r[aá]pid|habitual|f[aá]cil)/i.test(command)) {
+        draft.time = styleRef.current.preferredTime;
+      }
+
       // Step-by-step missing field prompts (never auto-assign date!)
       if (!draft.guestName) {
         reply('¿A nombre de quién pongo la reserva?');
@@ -715,7 +744,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         return;
       }
       if (!draft.date) {
-        reply(`Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas. ¿Para qué fecha o día es la reserva? (Puedes decir hoy, mañana, el viernes...)`);
+        const noticeStr = learnedNotice ? ` (he recordado sus datos habituales: ${draft.partySize} personas${draft.time ? ' a las ' + draft.time : ''})` : '';
+        reply(`Anotado a nombre de ${draft.guestName}${noticeStr}. ¿Para qué fecha o día es la reserva? (Puedes decir hoy, mañana, el viernes...)`);
         return;
       }
       if (!draft.time) {
