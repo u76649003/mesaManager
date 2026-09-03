@@ -940,6 +940,20 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         } else {
           message = '¿A qué cliente o reserva quieres enviar la solicitud de pago por Bizum o pasarela?';
         }
+      } else if (/(qu[eé]\s+has?\s+aprendido|tus?\s+preferencias|mis?\s+preferencias|qu[eé]\s+recuerdas|memoria|clientes?\s+frecuentes)/i.test(command)) {
+        const s = styleRef.current;
+        const prefRoom = s.preferredRoomId ? rooms.find(r => r.id === s.preferredRoomId)?.name : null;
+        const parts = [];
+        if (prefRoom) parts.push(`tu salón más usado es **${prefRoom}**`);
+        if (s.preferredPartySize) parts.push(`tu grupo habitual es de **${s.preferredPartySize} personas**`);
+        if (s.preferredTime) parts.push(`tu hora más frecuente son las **${s.preferredTime}**`);
+        if (s.frequentGuests?.length) parts.push(`tus clientes habituales registradas/os son **${s.frequentGuests.slice(0, 5).join(', ')}**`);
+
+        if (parts.length > 0) {
+          message = `He aprendido tus preferencias en tu restaurante: ${parts.join(', ')}. Llevamos ${s.interactions} interacciones aprendiendo juntas/os.`;
+        } else {
+          message = 'Todavía estoy aprendiendo de ti. Conforme hagamos más reservas e interacciones iré recordando tus salones, horarios y clientes habituales.';
+        }
       } else if (/(reserva|reservar|quiero|haz|ponme|dame|necesito)/i.test(command)) {
         conversationRef.current = { kind: 'reservation', draft: {} };
         message = '¿A nombre de quién pongo la reserva?';
