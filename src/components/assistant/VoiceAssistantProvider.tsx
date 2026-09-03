@@ -1138,31 +1138,19 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-slate-300">
                     {localAIInfo.state === 'unavailable' && '⚠️ IA local no disponible'}
-                    {localAIInfo.state === 'not_installed' && '📦 Modelo IA no instalado'}
-                    {localAIInfo.state === 'downloading' && `⬇️ Descargando… ${localAIInfo.downloadProgress ?? 0}%`}
+                    {(localAIInfo.state === 'not_installed' || localAIInfo.state === 'downloading') && `⏳ Activando IA local… ${localAIInfo.downloadProgress ? `${localAIInfo.downloadProgress}%` : ''}`}
                     {localAIInfo.state === 'loading' && '⏳ Preparando IA…'}
                     {localAIInfo.state === 'error' && '❌ Error en IA local'}
                   </span>
-                  {localAIInfo.state === 'not_installed' && (
-                    <button
-                      onClick={() => { void modelManager.downloadModel(); }}
-                      className="rounded-lg bg-violet-600 px-2 py-1 text-white hover:bg-violet-500"
-                    >
-                      Descargar (~400 MB)
-                    </button>
-                  )}
-                  {localAIInfo.state === 'downloading' && (
+                  {(localAIInfo.state === 'downloading' || localAIInfo.state === 'not_installed') && (
                     <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-700">
                       <div
                         className="h-full rounded-full bg-violet-500 transition-all"
-                        style={{ width: `${localAIInfo.downloadProgress ?? 0}%` }}
+                        style={{ width: `${localAIInfo.downloadProgress ?? 10}%` }}
                       />
                     </div>
                   )}
                 </div>
-                {localAIInfo.state === 'not_installed' && (
-                  <p className="mt-1 text-slate-500">Los comandos básicos siguen funcionando.</p>
-                )}
                 {localAIInfo.state === 'error' && localAIInfo.error && (
                   <p className="mt-1 text-red-400">{localAIInfo.error}</p>
                 )}
