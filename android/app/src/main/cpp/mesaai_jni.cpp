@@ -72,7 +72,7 @@ Java_com_mesamanager_app_LocalAIEngine_nativeLoadModel(
     cparams.n_threads = (uint32_t)nThreads;
     cparams.n_threads_batch = (uint32_t)nThreads;
 
-    llama_context* ctx = llama_new_context_with_model(model, cparams);
+    llama_context* ctx = llama_init_from_model(model, cparams);
     if (!ctx) {
         LOGE("Failed to create context");
         llama_model_free(model);
@@ -122,10 +122,12 @@ Java_com_mesamanager_app_LocalAIEngine_nativeCompletion(
     llama_model*   model = state->model;
     llama_sampler* smpl  = state->smpl;
 
+    const struct llama_vocab* vocab = llama_model_get_vocab(model);
+
     // Tokenize prompt
-    const int n_prompt = -llama_tokenize(model, prompt, strlen(prompt), nullptr, 0, true, true);
+    const int n_prompt = -llama_tokenize(vocab, prompt, strlen(prompt), nullptr, 0, true, true);
     std::vector<llama_token> tokens_prompt(n_prompt);
-    if (llama_tokenize(model, prompt, strlen(prompt), tokens_prompt.data(), n_prompt, true, true) < 0) {
+    if (llama_tokenize(vocab, prompt, strlen(prompt), tokens_prompt.data(), n_prompt, true, true) < 0) {
         LOGE("Tokenization failed");
         env->ReleaseStringUTFChars(jprompt, prompt);
         return nullptr;
@@ -201,7 +203,7 @@ Java_com_mesamanager_app_LocalAIEngine_nativeCompletion(
     LOGI("Generated %d tokens, output length=%zu", n_generated, output.size());
 
     // Reset context KV cache for next call
-    llama_kv_cache_clear(ctx);
+    llama_memory_clear(llama_get_memory(ctx), true);
 
     return env->NewStringUTF(output.c_str());
 }

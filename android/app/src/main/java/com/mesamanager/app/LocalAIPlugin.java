@@ -53,7 +53,7 @@ public class LocalAIPlugin extends Plugin {
     public void load() {
         engine = LocalAIEngine.getInstance();
         engine.init();
-        Log.i(TAG, "LocalAIPlugin loaded. JNI available: " + engine.isJniAvailable());
+        Log.i(TAG, "LocalAIPlugin loaded. JNI available: " + engine.isNativeAvailable());
     }
 
     // ── isSupported ─────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ public class LocalAIPlugin extends Plugin {
     @PluginMethod
     public void isSupported(PluginCall call) {
         JSObject result = new JSObject();
-        result.put("supported", engine.isJniAvailable());
+        result.put("supported", engine.isNativeAvailable());
         call.resolve(result);
     }
 
@@ -76,7 +76,7 @@ public class LocalAIPlugin extends Plugin {
         result.put("freeStorageMb",     engine.getFreeStorageMb(ctx));
         result.put("architecture",      engine.getPrimaryAbi());
         result.put("androidSdk",        android.os.Build.VERSION.SDK_INT);
-        result.put("nativeLibsAvailable", engine.isJniAvailable());
+        result.put("nativeLibsAvailable", engine.isNativeAvailable());
         result.put("recommendedContext", 2048);
         call.resolve(result);
     }
@@ -126,7 +126,7 @@ public class LocalAIPlugin extends Plugin {
 
     @PluginMethod
     public void chat(PluginCall call) {
-        if (!engine.isJniAvailable()) {
+        if (!engine.isNativeAvailable()) {
             JSObject err = new JSObject();
             err.put("available", false);
             err.put("error", "IA local no disponible en este dispositivo.");
@@ -334,7 +334,7 @@ public class LocalAIPlugin extends Plugin {
             String toolsDesc = buildToolsDescription(toolsArr);
 
             for (int i = 0; i < messagesArr.length(); i++) {
-                JSObject msg = messagesArr.getJSObject(i);
+                JSObject msg = JSObject.fromJSONObject(messagesArr.getJSONObject(i));
                 if (msg == null) continue;
                 String role    = msg.getString("role", "user");
                 String content = msg.getString("content", "");
@@ -367,9 +367,9 @@ public class LocalAIPlugin extends Plugin {
         sb.append("HERRAMIENTAS DISPONIBLES (responde con JSON si quieres usar una):\n");
         try {
             for (int i = 0; i < toolsArr.length(); i++) {
-                JSObject tool = toolsArr.getJSObject(i);
+                JSObject tool = JSObject.fromJSONObject(toolsArr.getJSONObject(i));
                 if (tool == null) continue;
-                JSObject fn = tool.getJSObject("function");
+                JSObject fn = tool.has("function") ? JSObject.fromJSONObject(tool.getJSONObject("function")) : null;
                 if (fn == null) continue;
                 String name = fn.getString("name", "");
                 String desc = fn.getString("description", "");
