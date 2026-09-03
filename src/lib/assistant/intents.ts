@@ -173,11 +173,15 @@ function normalizeTableLabel(raw: string): string {
 export function parseAssistantIntent(raw: string, now = new Date()): AssistantIntent {
   const text = raw.toLocaleLowerCase('es-ES').trim();
   const tableLabel = extractTableLabel(text);
-  const partyMatches = [...text.matchAll(/(?:para|somos)\s+([a-záéíóúüñ0-9]+)/gi)];
-  const partySize = partyMatches.map((match) => extractNumber(match[1])).find((value) => value !== undefined);
-  const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
   const date = extractDate(text, now);
   const time = extractTime(text);
+  const partyMatches = [...text.matchAll(/(?:para|somos)\s+([a-záéíóúüñ0-9]+)|([a-záéíóúüñ0-9]+)\s*(?:personas?|pax|comensales?)/gi)];
+  let partySize = partyMatches.map((match) => extractNumber(match[1] || match[2])).find((value) => value !== undefined && value >= 1 && value <= 30);
+  if (!partySize) {
+    const rawNum = extractNumber(text);
+    if (rawNum && rawNum >= 1 && rawNum <= 30 && !time && !tableLabel) partySize = rawNum;
+  }
+  const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
 
   if (/(qu[eé]\s+)?reservas?.*(hoy|esta noche)|reservas?\s+(de\s+)?hoy|qui[eé]n\s+viene\s+hoy/i.test(text)) {
     return { action: 'list_today_reservations', ...(tableLabel ? { tableLabel } : {}) };

@@ -49,6 +49,11 @@ test('understands free tables by voice', () => {
   assert.deepEqual(parseAssistantIntent('dime qué mesas tengo libres'), { action: 'list_free_tables' });
 });
 
+test('parses standalone party size utterances like 4 personas', () => {
+  assert.equal(parseAssistantIntent('4 personas').partySize, 4);
+  assert.equal(parseAssistantIntent('somos 4').partySize, 4);
+});
+
 import { extractTime } from './intents';
 
 test('parses spoken Spanish hours correctly', () => {
