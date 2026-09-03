@@ -145,6 +145,7 @@ export default function SettingsPage() {
   const [assistantName, setAssistantName] = useState('');
   const [bizumPhone, setBizumPhone] = useState('');
   const [bizumName, setBizumName] = useState('');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
 
   useEffect(() => {
     if (rooms && rooms.length > 0 && (!activeRoom || activeRoom.id === 'temp')) {
@@ -176,7 +177,7 @@ export default function SettingsPage() {
         setTenantId(profile.tenant_id);
         const { data: tenant } = await supabase
           .from('tenants')
-          .select('grace_period_minutes, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, stripe_secret_key, stripe_publishable_key, google_email, assistant_name, bizum_phone, bizum_name')
+          .select('grace_period_minutes, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, stripe_secret_key, stripe_publishable_key, google_email, assistant_name, bizum_phone, bizum_name, gemini_api_key')
           .eq('id', profile.tenant_id)
           .single();
         if (tenant) {
@@ -192,6 +193,7 @@ export default function SettingsPage() {
           setAssistantName(tenant.assistant_name || '');
           setBizumPhone(tenant.bizum_phone || '');
           setBizumName(tenant.bizum_name || '');
+          setGeminiApiKey(tenant.gemini_api_key || '');
 
           if (tenant.smtp_host === 'smtp.gmail.com' || !tenant.smtp_host) {
             setEmailProvider('gmail');
@@ -262,6 +264,7 @@ export default function SettingsPage() {
         assistant_enabled: true,
         bizum_phone: bizumPhone.trim() || null,
         bizum_name: bizumName.trim() || null,
+        gemini_api_key: geminiApiKey.trim() || null,
       })
       .eq('id', tenantId);
 
@@ -643,6 +646,11 @@ export default function SettingsPage() {
                         <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">Nombre del asistente</label>
                         <input maxLength={24} value={assistantName} onChange={(e) => setAssistantName(e.target.value)} placeholder="Ej. Mara" className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-sm focus:border-blue-500" />
                         <p className="text-[10px] text-slate-450 mt-2 font-bold">La frase de activación será “Ey {assistantName || 'nombre'}”.</p>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">Clave de API Gemini (Para IA online)</label>
+                        <input type="password" value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-sm focus:border-blue-500" />
+                        <p className="text-[10px] text-slate-450 mt-2 font-bold">Introduce tu API Key gratuita de Google Gemini para habilitar el asistente por voz online de forma autónoma.</p>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div><label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-2">Teléfono Bizum</label><input value={bizumPhone} onChange={(e) => setBizumPhone(e.target.value)} placeholder="600 000 000" className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl outline-none font-bold text-slate-900 text-sm focus:border-blue-500" /></div>

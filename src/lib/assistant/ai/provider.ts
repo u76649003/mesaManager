@@ -4,8 +4,12 @@
 // processWithAI is the main entry point.
 // Returns null if AI is unavailable → caller uses parseAssistantIntent fallback.
 // Returns an AIResponseKind object on success.
+//
+// Provider priority: LOCAL (llama.cpp) → OLLAMA (HTTP) → parseAssistantIntent
+// The local provider is initialized lazily on first call.
 
 import { callAssistantChat } from './ollama';
+import { localLlamaProvider } from './localProvider';
 import {
   AI_TOOLS, ALLOWED_TOOLS,
   executeConsultarEstado,
@@ -47,6 +51,40 @@ function abortPreviousRequest(): AbortController {
   return activeController;
 }
 
+// ── Provider chain ───────────────────────────────────────────
+// Tries LOCAL (llama.cpp) first, then OLLAMA (HTTP), then returns null.
+
+let localInitStarted = false;
+
+async function callAIWithFallback(
+  messages: import('./types').AIMessage[],
+  tools: import('./types').AITool[],
+  restaurantContext: string,
+  signal: AbortSignal
+): Promise<import('./types').AIProviderResponse | null> {
+  // ── 1. Try LOCAL provider ──────────────────────────────────
+  if (!localInitStarted) {
+    localInitStarted = true;
+    void localLlamaProvider.initialize(); // kick off async init in background
+  }
+
+  if (localLlamaProvider.available) {
+    try {
+      console.info('[AI] Using LOCAL provider (llama.cpp)');
+      const result = await localLlamaProvider.chat(messages, tools, signal);
+      if (result.finish_reason !== 'error') return result;
+      console.warn('[AI] LOCAL provider returned error — falling back to Ollama');
+    } catch (err) {
+      console.warn('[AI] LOCAL provider threw:', err, '— falling back to Ollama');
+    }
+  } else {
+    console.info('[AI] LOCAL provider not ready — trying Ollama');
+  }
+
+  // ── 2. Try OLLAMA provider (HTTP) ─────────────────────────
+  return callAssistantChat({ messages, tools, restaurantContext }, signal);
+}
+
 // ── Main entry ───────────────────────────────────────────────
 export async function processWithAI(
   command: string,
@@ -70,13 +108,12 @@ export async function processWithAI(
   // ── Add user turn ────────────────────────────────────────
   addUserMessage(session, command);
 
-  // ── Call AI (with abort control) ─────────────────────────
+  // ── Call AI (LOCAL → OLLAMA → null) ──────────────────────
   const controller = abortPreviousRequest();
   console.info('[AI] Processing:', command);
 
-  const aiResponse = await callAssistantChat(
-    { messages: session.messages, tools: AI_TOOLS, restaurantContext },
-    controller.signal
+  const aiResponse = await callAIWithFallback(
+    session.messages, AI_TOOLS, restaurantContext, controller.signal
   );
 
   if (!aiResponse) {
@@ -131,9 +168,8 @@ export async function processWithAI(
 
     // Make a second AI call to get the natural-language response
     const controller2 = abortPreviousRequest();
-    const followUp = await callAssistantChat(
-      { messages: session.messages, tools: AI_TOOLS, restaurantContext },
-      controller2.signal
+    const followUp = await callAIWithFallback(
+      session.messages, AI_TOOLS, restaurantContext, controller2.signal
     );
 
     if (!followUp || !followUp.content) {

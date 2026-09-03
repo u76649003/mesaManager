@@ -48,4 +48,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Needed to read model files from app private storage on some Android versions -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 </manifest>
