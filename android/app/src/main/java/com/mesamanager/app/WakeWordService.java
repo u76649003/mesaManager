@@ -35,8 +35,8 @@ public class WakeWordService extends Service implements RecognitionListener {
 
     private static final String CHANNEL_ID      = "mesamanager_assistant";
     private static final int    NOTIFICATION_ID = 1707;
-    private static final long   POST_SPEAK_DELAY_MS = 500L;
-    private static final long   REPLY_TIMEOUT_MS = 14_000L;
+    private static final long   POST_SPEAK_DELAY_MS = 600L;   // slightly longer pause before re-listening
+    private static final long   REPLY_TIMEOUT_MS = 25_000L;   // 25 s — generous for multi-turn reservation flow
     private static final long   TTS_WATCHDOG_MS  = 7_500L;
     private static final long   DEDUP_MS = 2_000L;
 

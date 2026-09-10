@@ -1,4 +1,4 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 
 export const assistantIntentSchema = z.discriminatedUnion('action', [
   z.object({
@@ -53,16 +53,31 @@ function localIso(date: Date) {
 }
 
 export function extractDate(text: string, now: Date = new Date()): string | undefined {
-  const iso = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1]; if (iso) return iso;
-  const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})(?:[\/-](20\d{2}))?\b/);
+  const norm = text.toLocaleLowerCase('es-ES').trim();
+  const iso = norm.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1]; if (iso) return iso;
+  const numeric = norm.match(/\b(\d{1,2})[/\-](\d{1,2})(?:[/\-](20\d{2}))?\b/);
   if (numeric) return localIso(new Date(Number(numeric[3] ?? now.getFullYear()), Number(numeric[2]) - 1, Number(numeric[1])));
   const result = new Date(now); result.setHours(12, 0, 0, 0);
-  if (/\bpasado mañana\b/.test(text)) { result.setDate(result.getDate() + 2); return localIso(result); }
-  if (/\bmañana\b/.test(text)) { result.setDate(result.getDate() + 1); return localIso(result); }
-  if (/\bhoy\b/.test(text)) return localIso(result);
+  if (/\bpasado\s+mañana\b/.test(norm)) { result.setDate(result.getDate() + 2); return localIso(result); }
+  if (/\bmañana\b/.test(norm)) { result.setDate(result.getDate() + 1); return localIso(result); }
+  if (/\bhoy\b|\besta\s+noche\b|\beste\s+mediod[ií]a\b/.test(norm)) return localIso(result);
+  if (/\bmediod[ií]a\b/.test(norm)) return localIso(result);
+  const inDays = norm.match(/\ben\s+(\w+)\s+d[ií]as?\b/);
+  if (inDays) {
+    const n = numberWords[inDays[1]] ?? Number(inDays[1]);
+    if (n && !isNaN(n)) { result.setDate(result.getDate() + n); return localIso(result); }
+  }
+  if (/\b(este\s+)?fin\s+de\s+semana\b/.test(norm)) {
+    const toSat = (6 - result.getDay() + 7) % 7 || 7;
+    result.setDate(result.getDate() + toSat); return localIso(result);
+  }
   const days = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-  const wanted = days.findIndex((day) => text.includes(day));
-  if (wanted >= 0) { let delta = (wanted - result.getDay() + 7) % 7; if (delta === 0) delta = 7; result.setDate(result.getDate() + delta); return localIso(result); }
+  const wanted = days.findIndex((day) => norm.includes(day));
+  if (wanted >= 0) {
+    let delta = (wanted - result.getDay() + 7) % 7;
+    if (delta === 0 || /\bpr[oó]ximo\b/.test(norm)) delta = delta === 0 ? 7 : delta;
+    result.setDate(result.getDate() + delta); return localIso(result);
+  }
   return undefined;
 }
 
@@ -76,90 +91,194 @@ const hourWordMap: Record<string, number> = {
 
 export function extractTime(raw: string): string | undefined {
   const norm = raw.toLocaleLowerCase('es-ES').trim();
-
-  // 1. Digital 24h format: "13:30", "21:00", "09.15", "14.00"
+  if (/\bmediod[ií]a\b/.test(norm)) return '12:00';
+  if (/\bmedianoche\b/.test(norm)) return '00:00';
   const digitalMatch = norm.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/);
-  if (digitalMatch) {
-    const h = String(Number(digitalMatch[1])).padStart(2, '0');
-    return `${h}:${digitalMatch[2]}`;
-  }
-
-  // 2. Hour with 'h' format: "13h", "13 h", "13h30"
+  if (digitalMatch) { const h = String(Number(digitalMatch[1])).padStart(2, '0'); return `${h}:${digitalMatch[2]}`; }
   const hMatch = norm.match(/\b([01]?\d|2[0-3])\s*h\s*([0-5]\d)?\b/);
-  if (hMatch) {
-    const h = String(Number(hMatch[1])).padStart(2, '0');
-    const m = hMatch[2] ? hMatch[2] : '00';
-    return `${h}:${m}`;
-  }
-
-  // 3. AM / PM context check
+  if (hMatch) { const h = String(Number(hMatch[1])).padStart(2, '0'); const m = hMatch[2] ? hMatch[2] : '00'; return `${h}:${m}`; }
   const isPM = /\b(de\s+la\s+(tarde|noche)|pm|p\.m\.)\b/.test(norm);
-  const isAM = /\b(de\s+la\s+mañana|am|a\.m\.)\b/.test(norm);
-
-  // 4. Time context requirement to avoid confusing non-time numbers
+  const isAM = /\b(de\s+la\s+(mañana|madrugada)|am|a\.m\.)\b/.test(norm);
   const hasTimeContext =
-    /\b(la|las|a\s+la|a\s+las|sobre\s+la|sobre\s+las|en\s+punto|de\s+la\s+(tarde|noche|mañana)|y\s+(media|cuarto)|menos\s+cuarto)\b/.test(norm) ||
-    /\b\d{1,2}\s*(?:de\s+la\s+(?:tarde|noche|mañana)|pm|am)\b/.test(norm);
-
+    /\b(la|las|a\s+la|a\s+las|sobre\s+la|sobre\s+las|en\s+punto|de\s+la\s+(tarde|noche|mañana|madrugada)|y\s+(media|cuarto)|menos\s+cuarto)\b/.test(norm) ||
+    /\b\d{1,2}\s*(?:de\s+la\s+(?:tarde|noche|mañana|madrugada)|pm|am)\b/.test(norm);
   if (!hasTimeContext) return undefined;
-
-  // 5. Match spoken hours (prioritize explicit time indicators like 'a las' or 'la/las')
   const spokenMatch =
-    norm.match(
-      /(?:a\s+las?|sobre\s+las?|eso\s+de\s+las?|\bla\b|\blas\b)\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i,
-    ) ||
-    norm.match(
-      /(?:(?:a|sobre)\s+)?(?:la|las|eso\s+de\s+(?:la|las))?\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i,
-    );
-
+    norm.match(/(?:a\s+las?|sobre\s+las?|eso\s+de\s+las?|\bla\b|\blas\b)\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i) ||
+    norm.match(/(?:(?:a|sobre)\s+)?(?:la|las|eso\s+de\s+(?:la|las))?\s*(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintid[oó]s|veintitr[eé]s|\d{1,2})(?:\s+(?:y|menos)\s+(media|cuarto|\d{1,2}))?/i);
   if (spokenMatch) {
     const rawH = spokenMatch[1].toLocaleLowerCase('es-ES');
     let h = hourWordMap[rawH] ?? Number(rawH);
     if (isNaN(h) || h < 0 || h > 23) return undefined;
-
     let m = 0;
     const minPart = spokenMatch[2];
     if (minPart) {
       if (minPart === 'media') m = 30;
-      else if (minPart === 'cuarto') {
-        if (norm.includes('menos cuarto')) {
-          h = (h - 1 + 24) % 24;
-          m = 45;
-        } else {
-          m = 15;
-        }
-      } else {
-        const numM = Number(minPart);
-        if (!isNaN(numM) && numM >= 0 && numM < 60) m = numM;
-      }
+      else if (minPart === 'cuarto') { if (norm.includes('menos cuarto')) { h = (h - 1 + 24) % 24; m = 45; } else m = 15; }
+      else { const numM = Number(minPart); if (!isNaN(numM) && numM >= 0 && numM < 60) m = numM; }
     }
-
-    // Convert 12h to 24h format for restaurant usage if no explicit AM/PM
-    if (isPM) {
-      if (h < 12) h += 12;
-    } else if (isAM) {
-      if (h === 12) h = 0;
-    } else if (h >= 1 && h <= 11) {
-      // Restaurant heuristics: 1..6 PM (13:00..18:00), 7..11 PM (19:00..23:00)
-      h += 12;
-    }
-
+    if (isPM) { if (h < 12) h += 12; }
+    else if (isAM) { if (h === 12) h = 0; }
+    else if (h >= 1 && h <= 11) h += 12;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+  return undefined;
+}
+
+// ── Lenient time extractor (used when field context IS time) ─────────────────
+function extractTimeLenient(norm: string): string | undefined {
+  const m =
+    norm.match(/(?:a\s+)?las?\s+(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|diecis[eé]is|diecisiete|dieciocho|diecinueve|veinte|veintiuno|\d{1,2})/i) ||
+    norm.match(/^(una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|\d{1,2})\s*(?:y\s+(?:media|cuarto))?$/i);
+  if (!m) return undefined;
+  const rawH = m[1].toLocaleLowerCase('es-ES');
+  let h = hourWordMap[rawH] ?? Number(rawH);
+  if (isNaN(h) || h < 0 || h > 23) return undefined;
+  let mins = 0;
+  if (/y\s+media/.test(norm)) mins = 30;
+  else if (/y\s+cuarto/.test(norm)) mins = 15;
+  else if (/menos\s+cuarto/.test(norm)) { h = (h - 1 + 24) % 24; mins = 45; }
+  if (h >= 1 && h <= 11) h += 12;
+  return `${String(h).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+}
+
+// ── Context-aware guest name extractor ──────────────────────────────────────
+
+const NAME_BLACKLIST = new Set([
+  'hoy', 'mañana', 'pasado', 'tarde', 'noche', 'mediodía', 'medianoche',
+  'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo',
+  'uno', 'una', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez',
+  'once', 'doce', 'trece', 'catorce', 'quince', 'veinte',
+  'personas', 'persona', 'pax', 'comensales', 'comensal',
+  'mesa', 'mesas', 'terraza', 'interior', 'sala', 'comedor', 'bar', 'vip',
+  'reserva', 'reservas', 'reservar', 'cancelar', 'modificar', 'cambiar',
+  'quiero', 'quiera', 'quisiera', 'poner', 'hacer', 'ponme', 'dame', 'haz',
+  'nueva', 'nuevo', 'si', 'sí', 'no', 'ok', 'vale', 'bueno', 'bien', 'claro',
+  'para', 'con', 'por', 'desde', 'hasta', 'sobre', 'entre',
+  'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+  'de', 'del', 'al', 'en', 'a', 'y', 'o', 'e',
+  'que', 'qué', 'quien', 'quién', 'como', 'cómo', 'cuando', 'cuándo',
+  'hay', 'tiene', 'tienen', 'tengo', 'tenemos',
+]);
+
+function titleCase(s: string): string {
+  return s.replace(/\b([a-záéíóúüñ])/gi, (c) => c.toLocaleUpperCase('es-ES'));
+}
+
+/**
+ * Dedicated guest name extractor.
+ * When `isDirectAnswer` is true (system just asked "¿A nombre de quién?"),
+ * aggressively treats the whole utterance as a name when it looks like one.
+ */
+export function extractGuestName(raw: string, isDirectAnswer = false): string | undefined {
+  const text = raw.trim();
+  const norm = text.toLocaleLowerCase('es-ES');
+
+  const explicit = text.match(
+    /(?:(?:a\s+)?nombre\s+de|me\s+llamo|soy|para|el\s+cliente\s+(?:es|se\s+llama?)|se\s+llama?|ponlo\s+a\s+nombre\s+de)\s+([A-Za-záéíóúüñÁÉÍÓÚÜÑ][A-Za-záéíóúüñÁÉÍÓÚÜÑ\s'·\-]{1,40}?)(?:\s*[.,]|\s+(?:el|la|los|las|para|con|y\s+\d|\d)\b|$)/i,
+  );
+  if (explicit?.[1]) {
+    const candidate = explicit[1].trim();
+    if (!NAME_BLACKLIST.has(candidate.toLocaleLowerCase('es-ES'))) return titleCase(candidate);
+  }
+
+  if (isDirectAnswer) {
+    const words = text.split(/\s+/);
+    const allLetters = words.every(w => /^[a-záéíóúüñA-ZÁÉÍÓÚÜÑ'·\-]+$/.test(w));
+    const hasNonName = words.some(w => NAME_BLACKLIST.has(w.toLocaleLowerCase('es-ES')));
+    const hasDate = extractDate(norm) !== undefined;
+    const hasTime = extractTime(norm) !== undefined;
+    const hasNumber = /^\d+$/.test(norm.trim()) || !!numberWords[norm.trim()];
+    if (allLetters && !hasNonName && !hasDate && !hasTime && !hasNumber && words.length >= 1 && words.length <= 5) {
+      return titleCase(text);
+    }
+  }
+
+  const stripped = text.replace(/^(es|para|soy|me\s+llamo|nombre)\s+/i, '').trim();
+  if (stripped && /^[A-Za-záéíóúüñ]/.test(stripped)) {
+    const candidate = stripped.split(/\s+(?:el|para|con|de|a\s+las?|\d)\b/i)[0]?.trim() ?? stripped;
+    if (candidate && !NAME_BLACKLIST.has(candidate.toLocaleLowerCase('es-ES')) && !/\d/.test(candidate) && candidate.length >= 2) {
+      return titleCase(candidate);
+    }
   }
 
   return undefined;
 }
 
+export type ReservationField = 'guestName' | 'partySize' | 'date' | 'time' | 'table';
+
+export interface ConversationReply {
+  guestName?: string;
+  partySize?: number;
+  date?: string;
+  time?: string;
+  tableLabel?: string;
+  cancel?: boolean;
+  confirmed?: boolean;
+  rejected?: boolean;
+  unclear?: boolean;
+}
+
+/**
+ * Context-aware reply extractor for multi-turn reservation flow.
+ * Given which field the system expects, extracts it reliably — even from a single word.
+ */
+export function extractConversationReply(
+  raw: string,
+  expectedField: ReservationField,
+  now: Date = new Date(),
+): ConversationReply {
+  const norm = raw.toLocaleLowerCase('es-ES').trim();
+
+  // Global: cancel / confirm signals
+  if (/\b(cancela(r)?|para(r)?|olvida|abort[ao]|d[eé]jalo|no\s+quiero|no\s+la\s+hagas?|sal(ir)?)\b/i.test(norm)) return { cancel: true };
+  if (/^\s*(s[ií]|claro|correcto|confirmo|confirma|exacto|perfecto|adelante|ok|vale|dale|as[ií]\s+es|por\s+supuesto)\s*[.!]?\s*$/i.test(norm)) return { confirmed: true };
+  if (/^\s*(no|incorrecto|mal|error|equivocado|no\s+es)\s*[.!]?\s*$/i.test(norm)) return { rejected: true };
+
+  switch (expectedField) {
+    case 'guestName': {
+      const name = extractGuestName(raw, true);
+      return name ? { guestName: name } : { unclear: true };
+    }
+    case 'partySize': {
+      const ctxMatch = norm.match(/\b(?:somos|venimos|[eé]ramos|seremos)\s+([a-záéíóúüñ0-9]+)\b/);
+      if (ctxMatch) {
+        const n = numberWords[ctxMatch[1]] ?? Number(ctxMatch[1]);
+        if (n && !isNaN(n) && n >= 1 && n <= 50) return { partySize: n };
+      }
+      const n = extractNumber(norm);
+      if (n && n >= 1 && n <= 50) return { partySize: n };
+      return { unclear: true };
+    }
+    case 'date': {
+      const d = extractDate(norm, now);
+      return d ? { date: d } : { unclear: true };
+    }
+    case 'time': {
+      const t = extractTime(norm) ?? extractTimeLenient(norm);
+      return t ? { time: t } : { unclear: true };
+    }
+    case 'table': {
+      const tableMatch = norm.match(/\bmesa\s+([a-záéíóúüñ0-9]+)\b/i);
+      if (tableMatch?.[1]) return { tableLabel: tableMatch[1] };
+      const roomMatch = norm.match(/\b(terraza|interior|sala|comedor|bar|vip)\b/i);
+      if (roomMatch?.[1]) return { tableLabel: roomMatch[1] };
+      const laNum = norm.match(/\b(?:la|el|n[úu]mero)\s+([a-záéíóúüñ0-9]+)\b/);
+      if (laNum?.[1]) return { tableLabel: laNum[1] };
+      const n = extractNumber(norm);
+      if (n) return { tableLabel: String(n) };
+      return { unclear: true };
+    }
+  }
+}
+
 function extractTableLabel(text: string): string | undefined {
   const directMesa = text.match(/\bmesa\s+([a-záéíóúüñ0-9-]+)\b/i);
   if (directMesa) return normalizeTableLabel(directMesa[1]);
-
   const roomTable = text.match(/\b(?:terraza|interior|sala|comedor|bar|vip)\s+(?:la\s+)?([a-záéíóúüñ0-9-]+)\b/i);
   if (roomTable) return normalizeTableLabel(roomTable[1]);
-
   const laNum = text.match(/\b(?:la|n[úu]mero|num)\s+([a-záéíóúüñ0-9]+)\b/i);
   if (laNum) return normalizeTableLabel(laNum[1]);
-
   return undefined;
 }
 
@@ -187,13 +306,9 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
     return { action: 'list_today_reservations', ...(tableLabel ? { tableLabel } : {}) };
   }
   if (date && /reservas?/.test(text) && /(qué|que|cu[aá]les|tengo|hay|dime|ver)/.test(text)) return { action: 'list_reservations_date', date };
-  if (/(qu[eé]\s+)?mesas?.*(libres?|disponibles?)|(libres?|disponibles?).*mesas?/.test(text)) {
-    return { action: 'list_free_tables' };
-  }
+  if (/(qu[eé]\s+)?mesas?.*(libres?|disponibles?)|(libres?|disponibles?).*mesas?/.test(text)) return { action: 'list_free_tables' };
 
-  if (reservationReference && /(cancela|cancelar|anula|anular)/.test(text)) {
-    return assistantIntentSchema.parse({ action: 'cancel_reservation', reference: reservationReference });
-  }
+  if (reservationReference && /(cancela|cancelar|anula|anular)/.test(text)) return assistantIntentSchema.parse({ action: 'cancel_reservation', reference: reservationReference });
   if (reservationReference && /(sienta|sentar|acomoda|acomodar)/.test(text)) return { action: 'seat_reservation', reference: reservationReference };
   if (reservationReference && /(anticipo|depósito|deposito|garantía|garantia)/.test(text)) {
     const amountMatch = text.match(/(?:anticipo|depósito|deposito|garantía|garantia)(?:\s+de)?\s+(\d+(?:[.,]\d{1,2})?)/);
@@ -211,37 +326,21 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
     if (name) return assistantIntentSchema.parse({ action: 'create_reservation', guestName: name, date, time, partySize });
   }
 
-  if (tableLabel && /(libre|disponible|cabe|puedo|reservar)/.test(text)) {
-    return assistantIntentSchema.parse({
-      action: 'check_table',
-      tableLabel,
-      partySize,
-    });
-  }
+  if (tableLabel && /(libre|disponible|cabe|puedo|reservar)/.test(text)) return assistantIntentSchema.parse({ action: 'check_table', tableLabel, partySize });
 
   if (/(mejor|recomienda|recomiendas|qué mesa|que mesa|dónde pongo|donde pongo)/.test(text)) {
     const size = partySize ?? extractNumber(text);
     if (size) return assistantIntentSchema.parse({ action: 'recommend_table', partySize: size });
   }
 
-  // Conversational reservation intent with or without explicit verb
   const hasReservationParams =
-    Boolean(tableLabel) ||
-    Boolean(time) ||
-    Boolean(partySize) ||
+    Boolean(tableLabel) || Boolean(time) || Boolean(partySize) ||
     /(reservar?|crea|crear|haz|nueva|ponme|dame|hacer?|reserva|mesa|terraza|comedor|sala|interior)\b/.test(text);
 
   if (hasReservationParams) {
     const nameMatch = text.match(/(?:a nombre de|nombre)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el|para|a las?|en)\b|$)/i)?.[1]?.trim();
     const cleanName = (nameMatch && !['terraza', 'sala', 'comedor', 'interior', 'hoy', 'mañana', 'uno', 'dos', 'tres'].includes(nameMatch.toLowerCase())) ? nameMatch : undefined;
-    return {
-      action: 'draft_reservation',
-      tableLabel,
-      guestName: cleanName,
-      date: date ?? localIso(now),
-      time,
-      partySize,
-    };
+    return { action: 'draft_reservation', tableLabel, guestName: cleanName, date: date ?? localIso(now), time, partySize };
   }
 
   return { action: 'help' };

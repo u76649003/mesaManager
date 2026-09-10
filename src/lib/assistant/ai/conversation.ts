@@ -7,7 +7,7 @@
 import type { AIMessage, ConversationContext, ConversationSession, PendingAIOperation } from './types';
 
 const MAX_HISTORY_TURNS = 20; // keep last 20 user+assistant pairs
-const SESSION_TIMEOUT_MS = 60_000; // 60 s of inactivity → auto-close
+const SESSION_TIMEOUT_MS = 180_000; // 3 min of inactivity → auto-close (generous for reservation flows)
 
 // ── Factory ──────────────────────────────────────────────────
 export function createSession(systemPrompt: string): ConversationSession {

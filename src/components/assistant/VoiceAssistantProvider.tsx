@@ -7,7 +7,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import { createClient } from '@/lib/supabase/client';
 import { createPrepaymentSession } from '@/app/actions/payments';
 import { sendAssistantPaymentRequest } from '@/app/actions/emails';
-import { parseAssistantIntent, extractNumber, extractTime, extractDate, type AssistantMutationIntent } from '@/lib/assistant/intents';
+import { parseAssistantIntent, extractNumber, extractTime, extractDate, extractGuestName, extractConversationReply, type ReservationField, type AssistantMutationIntent } from '@/lib/assistant/intents';
 import {
   executeAssistantOperation, loadAssistantConfiguration, resolveReservation,
   saveAssistantConfiguration, type AssistantOperation,
@@ -41,6 +41,16 @@ type ReservationDraft = {
   askedPayment?: boolean;
   paymentAmount?: number;
 };
+// Reservation draft field progress — used to render UI chips
+type DraftFieldStatus = 'pending' | 'captured' | 'skipped';
+type DraftProgress = {
+  guestName: DraftFieldStatus;
+  partySize: DraftFieldStatus;
+  date: DraftFieldStatus;
+  time: DraftFieldStatus;
+  table: DraftFieldStatus;
+};
+
 type Conversation =
   | { kind: 'free_tables_room' }
   | { kind: 'search_tables'; roomId?: string; partySize?: number }
@@ -131,6 +141,50 @@ function findReservation(
 /** True when the assistant message is a question or we are mid-conversation. */
 function needsReply(message: string, inConversation: boolean) {
   return inConversation || message.trim().endsWith('?');
+}
+
+/** Natural question variations to avoid robotic repetition */
+const QUESTION_VARIANTS = {
+  guestName: [
+    '¿A nombre de quién pongo la reserva?',
+    '¿Me dices el nombre del cliente?',
+    '¿Cómo se llama el cliente?',
+  ],
+  partySize: [
+    '¿Para cuántas personas será?',
+    '¿Cuántos vendrán?',
+    '¿Para cuántas personas?',
+  ],
+  date: [
+    '¿Para qué día es la reserva?',
+    '¿Qué día vienen?',
+    '¿Para cuándo la pongo?',
+  ],
+  time: [
+    '¿A qué hora?',
+    '¿A qué hora vienen?',
+    '¿Qué hora les pongo?',
+  ],
+  table: [
+    '¿Qué mesa o salón prefieren?',
+    '¿En qué zona quieren sentarse?',
+  ],
+};
+
+function pickVariant(variants: string[], seed?: string): string {
+  const idx = seed ? Math.abs(seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % variants.length : 0;
+  return variants[idx]!;
+}
+
+/** Compute draft progress for UI chips */
+function getDraftProgress(draft: ReservationDraft): DraftProgress {
+  return {
+    guestName: draft.guestName ? 'captured' : 'pending',
+    partySize: draft.partySize ? 'captured' : 'pending',
+    date: draft.date ? 'captured' : 'pending',
+    time: draft.time ? 'captured' : 'pending',
+    table: draft.tableLabel ? 'captured' : 'pending',
+  };
 }
 
 // ===== Style Profile: learns and adapts to each user's conversation style =====
@@ -297,6 +351,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const [awaitingReply, setAwaitingReply] = useState(false);
   const [localAIInfo,   setLocalAIInfo]   = useState<ModelInfo | null>(null);
   const [showAIPanel,   setShowAIPanel]   = useState(false);
+  const [draftProgress, setDraftProgress] = useState<DraftProgress | null>(null);
 
   // Keep proposalRef in sync (answer/confirm use the ref to avoid stale closures)
   useEffect(() => { proposalRef.current = proposal; }, [proposal]);
@@ -484,6 +539,82 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     }
 
     setProposal(null);
+
+    // ── Explicit cancellation during conversation ────────────────────────────
+    const normCmd = command.toLocaleLowerCase('es-ES').trim();
+    if (/^(cancela|cancelar|para|olvida|descarta|detener)\b/i.test(normCmd)) {
+      conversationRef.current = null;
+      setDraftProgress(null);
+      if (aiSessionRef.current) clearSession(aiSessionRef.current, '');
+      reply('De acuerdo, cancelado. ¿En qué más te ayudo?');
+      return;
+    }
+
+    // ── 1. AI-First Conversation (Natural Human-like Agent) ───────────────────
+    const snapshot = buildStoreSnapshot();
+    const aiSession = ensureAISession(assistantName);
+    setWorking(true);
+    let aiHandled = false;
+    try {
+      const aiResult = await processWithAI(command, aiSession, snapshot, assistantName);
+      if (aiResult) {
+        aiHandled = true;
+        console.info('[VA] AI handled turn:', aiResult.kind);
+        if (aiResult.kind === 'end_session') {
+          if (aiSessionRef.current) clearSession(aiSessionRef.current, '');
+          conversationRef.current = null;
+          setDraftProgress(null);
+          setWorking(false);
+          reply(aiResult.text);
+          return;
+        }
+        if (aiResult.kind === 'proposal') {
+          const next: PendingProposal = {
+            summary: aiResult.summary,
+            operation: aiResult.operation as AssistantOperation,
+            paymentRequest: aiResult.paymentRequest,
+            prepayment: aiResult.prepayment,
+          };
+          const op = aiResult.operation as Record<string, unknown>;
+          setDraftProgress({
+            guestName: op.guest_name ? 'captured' : 'pending',
+            partySize: op.party_size ? 'captured' : 'pending',
+            date: op.date ? 'captured' : 'pending',
+            time: op.time ? 'captured' : 'pending',
+            table: (op.table_id || op.table_label) ? 'captured' : 'pending',
+          });
+          conversationRef.current = null;
+          setWorking(false);
+          setProposal(next);
+          reply(next.summary + ' ' + confirmQ(styleRef.current));
+          return;
+        }
+        if (aiResult.kind === 'text') {
+          setWorking(false);
+          // Keep visual draft chips in sync if user mentioned reservation details
+          const name = extractGuestName(command);
+          const num = extractNumber(command);
+          const d = extractDate(command);
+          const t = extractTime(command);
+          if (name || num || d || t) {
+            setDraftProgress((prev) => ({
+              guestName: (name || prev?.guestName === 'captured') ? 'captured' : 'pending',
+              partySize: (num || prev?.partySize === 'captured') ? 'captured' : 'pending',
+              date: (d || prev?.date === 'captured') ? 'captured' : 'pending',
+              time: (t || prev?.time === 'captured') ? 'captured' : 'pending',
+              table: prev?.table ?? 'pending',
+            }));
+          }
+          reply(aiResult.text);
+          return;
+        }
+      }
+    } catch (aiErr) {
+      console.warn('[VA] AI error, falling back to structured conversation:', aiErr);
+    } finally {
+      if (!aiHandled) setWorking(false);
+    }
+
     let message = '';
 
     // ── Mid-conversation topic switch / query interruption ────────────────────
@@ -678,32 +809,60 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
     if (conversationRef.current?.kind === 'reservation') {
       const draft = conversationRef.current.draft;
-      const parsed = parseAssistantIntent(command);
-      if (parsed.action === 'draft_reservation') {
-        Object.assign(draft, Object.fromEntries(Object.entries(parsed).filter(([k, v]) => k !== 'action' && v !== undefined)));
+
+      // ── Structured-First: determine which field we're waiting for ────────────
+      // This runs BEFORE any AI call — 100% reliable, ~0ms latency.
+      const pendingField: ReservationField | null =
+        !draft.guestName ? 'guestName'
+        : !draft.partySize ? 'partySize'
+        : !draft.date ? 'date'
+        : !draft.time ? 'time'
+        : !draft.tableLabel ? 'table'
+        : null;
+
+      // Extract the expected field from the user's reply using context-aware extractor
+      const reply_data = extractConversationReply(command, pendingField ?? 'guestName');
+
+      // Handle cancellation request
+      if (reply_data.cancel) {
+        conversationRef.current = null;
+        setDraftProgress(null);
+        reply('Reserva cancelada.');
+        return;
       }
 
-      // Robust field extraction from user utterance
+      // Handle confirmed (sí/correcto) — only meaningful when awaiting confirmation
+      if (reply_data.confirmed && pendingField === null) {
+        // All fields collected, user confirmed: trigger the proposal directly
+        void answerRef.current(command);
+        return;
+      }
+
+      // Merge extracted values into draft
+      if (reply_data.guestName && !draft.guestName) draft.guestName = reply_data.guestName;
+      if (reply_data.partySize && !draft.partySize) draft.partySize = reply_data.partySize;
+      if (reply_data.date && !draft.date) draft.date = reply_data.date;
+      if (reply_data.time && !draft.time) draft.time = reply_data.time;
+      if (reply_data.tableLabel && !draft.tableLabel) draft.tableLabel = reply_data.tableLabel;
+
+      // Also run the full intent parser to catch multi-field utterances
+      // (e.g. "Antonio García para cuatro el viernes a las nueve")
+      const parsed = parseAssistantIntent(command);
+      if (parsed.action === 'draft_reservation') {
+        if (parsed.guestName && !draft.guestName) draft.guestName = parsed.guestName;
+        if (parsed.partySize && !draft.partySize) draft.partySize = parsed.partySize;
+        if (parsed.date && !draft.date) draft.date = parsed.date;
+        if (parsed.time && !draft.time) draft.time = parsed.time;
+        if (parsed.tableLabel && !draft.tableLabel) draft.tableLabel = parsed.tableLabel;
+      }
+      // Also try bare extractors as fallback
       if (!draft.partySize) {
-        const num = extractNumber(command);
-        if (num && num >= 1 && num <= 30) draft.partySize = num;
+        const n = extractNumber(command);
+        if (n && n >= 1 && n <= 30) draft.partySize = n;
       }
-      if (!draft.date) {
-        const d = extractDate(command);
-        if (d) draft.date = d;
-      }
-      if (!draft.time) {
-        const t = extractTime(command);
-        if (t) draft.time = t;
-      }
-      if (!draft.guestName) {
-        const nameMatch = command.match(/(?:a nombre de|nombre)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el|para|a las?|en)\b|$)/i)?.[1]?.trim();
-        const rawClean = command.replace(/^(a nombre de|nombre|para)\s+/i, '').trim();
-        const candidate = nameMatch || rawClean;
-        if (candidate && !/^\d+$/.test(candidate) && !/\b(qu[eé]|cu[aá]l|d[oó]nde|cu[aá]ntas?|hay|mesas?|cancela|ayuda|hoy|mañana|terraza|interior|sala|comedor|personas?)\b/i.test(candidate)) {
-          draft.guestName = candidate;
-        }
-      }
+      if (!draft.date) { const d = extractDate(command); if (d) draft.date = d; }
+      if (!draft.time) { const t = extractTime(command); if (t) draft.time = t; }
+      if (!draft.guestName) { const g = extractGuestName(command, pendingField === 'guestName'); if (g) draft.guestName = g; }
 
       // Smart Learning Fast-Path: Auto-fill learned preferences from guest history or user style profile
       let learnedNotice = '';
@@ -734,22 +893,26 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         draft.time = styleRef.current.preferredTime;
       }
 
+      // Update draft progress for UI chips
+      setDraftProgress(getDraftProgress(draft));
+
       // Step-by-step missing field prompts (never auto-assign date!)
       if (!draft.guestName) {
-        reply('¿A nombre de quién pongo la reserva?');
+        reply(pickVariant(QUESTION_VARIANTS.guestName, command));
         return;
       }
       if (!draft.partySize) {
-        reply(`Anotado a nombre de ${draft.guestName}. ¿Para cuántas personas será la reserva?`);
+        const learnedHint = learnedNotice ? ` ${learnedNotice}` : '';
+        reply(`Anotado, ${draft.guestName}.${learnedHint} ${pickVariant(QUESTION_VARIANTS.partySize, draft.guestName)}`);
         return;
       }
       if (!draft.date) {
-        const noticeStr = learnedNotice ? ` (he recordado sus datos habituales: ${draft.partySize} personas${draft.time ? ' a las ' + draft.time : ''})` : '';
-        reply(`Anotado a nombre de ${draft.guestName}${noticeStr}. ¿Para qué fecha o día es la reserva? (Puedes decir hoy, mañana, el viernes...)`);
+        const learnedHint = learnedNotice ? ` ${learnedNotice}` : '';
+        reply(`${draft.partySize} personas para ${draft.guestName}.${learnedHint} ${pickVariant(QUESTION_VARIANTS.date, draft.guestName)}`);
         return;
       }
       if (!draft.time) {
-        reply(`Anotado a nombre de ${draft.guestName} para el ${draft.date}. ¿A qué hora vienen?`);
+        reply(`El ${draft.date} para ${draft.guestName}. ${pickVariant(QUESTION_VARIANTS.time, draft.date)}`);
         return;
       }
       if (!draft.tableLabel) {
@@ -758,8 +921,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           draft.tableLabel = optimal.bestTable.label;
         } else {
           const prompt = rooms.length > 1
-            ? `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas el ${draft.date} a las ${draft.time}. ¿En qué salón te gustaría? (${rooms.map(r => r.name).join(', ')})`
-            : `Anotado a nombre de ${draft.guestName} para ${draft.partySize} personas el ${draft.date} a las ${draft.time}. ¿Qué mesa prefieres?`;
+            ? `${pickVariant(QUESTION_VARIANTS.table, draft.guestName)} (${rooms.map(r => r.name).join(', ')})`
+            : pickVariant(QUESTION_VARIANTS.table, draft.guestName);
           reply(prompt);
           return;
         }
@@ -804,55 +967,13 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
           styleRef.current = evolveStyle(styleRef.current, command, { partySize: draft.partySize, time: draft.time, guestName: draft.guestName });
           if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
-          conversationRef.current = null; setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
+          conversationRef.current = null;
+          setDraftProgress(null); // clear progress chips once reservation is ready
+          setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
         } catch { reply('No he podido comprobar la disponibilidad ahora mismo.'); }
         finally { setWorking(false); }
         return;
       }
-
-    // ── Try AI first, fall back to parseAssistantIntent ─────────────────────
-    // If AI is available: process with natural language understanding.
-    // If AI fails/unavailable: the existing intent parser handles it identically to before.
-    const snapshot = buildStoreSnapshot();
-    const aiSession = ensureAISession(assistantName);
-    setWorking(true);
-    let aiHandled = false;
-    try {
-      const aiResult = await processWithAI(command, aiSession, snapshot, assistantName);
-      if (aiResult) {
-        aiHandled = true;
-        console.info('[VA] AI handled:', aiResult.kind);
-        if (aiResult.kind === 'end_session') {
-          // Clean up AI session and return to IDLE
-          if (aiSessionRef.current) clearSession(aiSessionRef.current, '');
-          conversationRef.current = null;
-          setWorking(false);
-          reply(aiResult.text);
-          return;
-        }
-        if (aiResult.kind === 'proposal') {
-          const next: PendingProposal = {
-            summary: aiResult.summary,
-            operation: aiResult.operation as AssistantOperation,
-            paymentRequest: aiResult.paymentRequest,
-            prepayment: aiResult.prepayment,
-          };
-          setWorking(false);
-          setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
-          return;
-        }
-        if (aiResult.kind === 'text') {
-          setWorking(false);
-          reply(aiResult.text);
-          return;
-        }
-        // kind === 'unavailable' → fall through to legacy parser
-      }
-    } catch (aiErr) {
-      console.warn('[VA] AI error, using fallback:', aiErr);
-    } finally {
-      if (!aiHandled) setWorking(false);
-    }
 
     // ── Single-shot intents (fallback / Ollama unavailable) ─────────────────
     console.info('[VA] Using parseAssistantIntent fallback');
@@ -907,6 +1028,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     } else if (intent.action === 'draft_reservation') {
       conversationRef.current = { kind: 'reservation', draft: { tableLabel: intent.tableLabel, guestName: intent.guestName, date: intent.date, time: intent.time, partySize: intent.partySize } };
       const draft = conversationRef.current.draft;
+      // Init progress chips
+      setDraftProgress(getDraftProgress(draft));
       // If all fields are already present, process immediately
       if (draft.tableLabel && draft.partySize && draft.date && draft.time && draft.guestName) { void answerRef.current(command); return; }
 
@@ -986,7 +1109,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
       } else if (/(reserva|reservar|quiero|haz|ponme|dame|necesito)/i.test(command)) {
         conversationRef.current = { kind: 'reservation', draft: {} };
-        message = '¿A nombre de quién pongo la reserva?';
+        setDraftProgress(getDraftProgress({}));
+        message = pickVariant(QUESTION_VARIANTS.guestName, command);
       } else {
         message = 'Puedo decirte las reservas de hoy, qué mesas están libres, gestionar cobros por Bizum o pasarela, y reservar, modificar o cancelar. ¿Qué necesitas?';
       }
@@ -1006,11 +1130,32 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     let listener: PluginListenerHandle | undefined;
     let cancelled = false;
     WakeWord.addListener('wakeCommand', ({ command }) => {
-      conversationRef.current = null;
-      if (aiSessionRef.current) {
-        clearSession(aiSessionRef.current, '');
+      // FIX: Do NOT clear the session/conversation if a reservation is in progress.
+      // Only reset on wake if we are fully idle (no active conversation state).
+      const hasActiveConversation = conversationRef.current !== null;
+      if (!hasActiveConversation) {
+        if (aiSessionRef.current) {
+          clearSession(aiSessionRef.current, '');
+        }
       }
-      if (command === '__WAKE__') { setOpen(true); reply('Dime, ¿en qué te ayudo?'); return; }
+
+      if (command === '__WAKE__') {
+        setOpen(true);
+        // If mid-reservation, remind the user where we were instead of a generic greeting
+        if (hasActiveConversation && conversationRef.current?.kind === 'reservation') {
+          const draft = conversationRef.current.draft;
+          const fields = [
+            draft.guestName ? `nombre: ${draft.guestName}` : null,
+            draft.partySize ? `${draft.partySize} personas` : null,
+            draft.date ?? null,
+            draft.time ? `a las ${draft.time}` : null,
+          ].filter(Boolean);
+          reply(fields.length > 0 ? `Continuamos la reserva (${fields.join(', ')}). ¿Seguimos?` : 'Dime.');
+        } else {
+          reply('Dime, ¿en qué te ayudo?');
+        }
+        return;
+      }
       if (command) {
         setTranscript(command);
         setOpen(true);
@@ -1033,7 +1178,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     try {
       const result = await executeAssistantOperation(p.operation);
       await fetchReservations();
-      let message = `Listo, operación completada para ${result.reservation_number}.`;
+      let message = `Listo, reserva ${result.reservation_number} confirmada.`;
       if (p.paymentRequest) {
         const sent = await sendAssistantPaymentRequest(result.id, p.paymentRequest, Number(p.operation.amount), window.location.origin);
         if (!sent?.success) { setProposal(null); reply(`El pago quedó pendiente, pero no se envió el correo: ${sent?.error || 'error desconocido'}.`); return; }
@@ -1044,7 +1189,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         await navigator.clipboard?.writeText(payment.url);
         message += ' El enlace de Stripe se ha copiado al portapapeles.';
       }
-      setProposal(null); reply(message);
+      setProposal(null);
+      setDraftProgress(null); // clear draft chips after successful confirmation
+      reply(message);
     } catch (error) {
       reply(error instanceof Error ? `No se realizó la operación: ${error.message}` : 'No se realizó la operación.');
     } finally { setWorking(false); }
@@ -1096,16 +1243,18 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
   // ── Session inactivity timeout ───────────────────────────────────────────────
   // If the AI session is open but there's been no activity for SESSION_TIMEOUT_MS,
-  // auto-close it. The legacy conversationRef timeout is separate.
+  // auto-close it. Reservation conversations get extra time (the guard inside skips them).
   useEffect(() => {
     if (sessionTimeoutRef.current) clearTimeout(sessionTimeoutRef.current);
     sessionTimeoutRef.current = setTimeout(() => {
       if (aiSessionRef.current && isSessionTimedOut(aiSessionRef.current)) {
+        // Keep reservation conversations alive regardless of timeout
+        if (conversationRef.current?.kind === 'reservation') return;
         console.info('[VA] AI session timed out — clearing');
         clearSession(aiSessionRef.current, '');
         conversationRef.current = null;
       }
-    }, 62_000); // slightly longer than SESSION_TIMEOUT_MS in conversation.ts
+    }, 185_000); // 3 min + 5s buffer — matches SESSION_TIMEOUT_MS in conversation.ts
     return () => { if (sessionTimeoutRef.current) clearTimeout(sessionTimeoutRef.current); };
   });
 
@@ -1166,9 +1315,52 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-semibold">
                 <Sparkles className="h-4 w-4 text-violet-400"/>{assistantName}
+                {draftProgress && (
+                  <span className="ml-1 rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-normal text-violet-300">
+                    Reserva en curso
+                  </span>
+                )}
               </div>
-              <button aria-label="Cerrar" onClick={() => setOpen(false)}><X className="h-4 w-4"/></button>
+              <button aria-label="Cerrar" onClick={() => {
+                setOpen(false);
+                // Optionally cancel in-progress reservation on close
+              }}><X className="h-4 w-4"/></button>
             </div>
+
+            {/* Reservation progress chips — shown while filling a reservation draft */}
+            {draftProgress && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {([
+                  { key: 'guestName' as const, label: 'Nombre' },
+                  { key: 'partySize' as const, label: 'Personas' },
+                  { key: 'date' as const, label: 'Día' },
+                  { key: 'time' as const, label: 'Hora' },
+                  { key: 'table' as const, label: 'Mesa' },
+                ] as const).map(({ key, label }) => (
+                  <span
+                    key={key}
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      draftProgress[key] === 'captured'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'bg-slate-700 text-slate-400'
+                    }`}
+                  >
+                    {draftProgress[key] === 'captured' && <Check className="h-2.5 w-2.5"/>}
+                    {label}
+                  </span>
+                ))}
+                <button
+                  className="ml-auto rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] text-red-400"
+                  onClick={() => {
+                    conversationRef.current = null;
+                    setDraftProgress(null);
+                    reply('Reserva cancelada.');
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
 
             {/* Text input (fallback / manual) */}
             <div className="mt-3 flex gap-2">
@@ -1197,7 +1389,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
                 <button disabled={working} onClick={() => void confirm()} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold disabled:opacity-40">
                   <Check className="h-4 w-4"/>Confirmar
                 </button>
-                <button disabled={working} onClick={() => { setProposal(null); reply('Operación descartada.'); }} className="rounded-xl border border-slate-600 px-3 py-2 text-sm">
+                <button disabled={working} onClick={() => { setProposal(null); setDraftProgress(null); reply('Operación descartada.'); }} className="rounded-xl border border-slate-600 px-3 py-2 text-sm">
                   Descartar
                 </button>
               </div>

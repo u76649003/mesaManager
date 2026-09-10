@@ -26,6 +26,7 @@ import {
   isEndOfSession,
 } from './conversation';
 import { buildRestaurantContext, buildSystemPrompt } from './context';
+import { extractDate, extractTime } from '../intents';
 import type {
   AIResponseKind,
   ConversationSession,
@@ -276,23 +277,35 @@ async function executeTool(
       if (!guest_name || !date || !time || !party_size) {
         return { kind: 'data', data: { error: 'Faltan campos obligatorios para crear la reserva' } };
       }
+      const normDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : (extractDate(date) ?? date);
+      const normTime = /^\d{2}:\d{2}$/.test(time) ? time : (extractTime(time) ?? time);
       const noteStr = notes ? ` (Nota: ${notes})` : '';
-      const mesaStr = table_label ? `, mesa ${table_label}` : '';
-      const summary = `Crear reserva para ${guest_name}, ${party_size} personas, el ${date} a las ${time}${mesaStr}${noteStr}.`;
+
+      // Find table if label provided, or automatically recommend best available
+      let resolvedTable = table_label
+        ? store.tables.find((t) => t.label.toLocaleLowerCase('es-ES') === table_label.toLocaleLowerCase('es-ES'))
+        : null;
+
+      if (!resolvedTable) {
+        const best = executeBuscarMejorMesa({ party_size, date: normDate, time: normTime }, toolCtx) as { mesa?: { id: string; label: string } };
+        if (best.mesa) {
+          resolvedTable = store.tables.find((t) => t.id === best.mesa!.id) ?? null;
+        }
+      }
+
+      const mesaStr = resolvedTable ? `, mesa ${resolvedTable.label}` : (table_label ? `, mesa ${table_label}` : '');
+      const summary = `Crear reserva para ${guest_name}, ${party_size} personas, el ${normDate} a las ${normTime}${mesaStr}${noteStr}.`;
       const operation: Record<string, unknown> = {
         action: 'create_reservation',
         guest_name,
         party_size,
-        date,
-        time,
+        date: normDate,
+        time: normTime,
         duration_minutes: duration_minutes ?? 90,
         notes,
+        ...(resolvedTable ? { table_id: resolvedTable.id } : {}),
       };
-      // Resolve table ID if label provided
-      if (table_label) {
-        const tbl = store.tables.find((t) => t.label.toLocaleLowerCase('es-ES') === table_label.toLocaleLowerCase('es-ES'));
-        if (tbl) operation.table_id = tbl.id;
-      }
+
       return { kind: 'proposal', data: { proposal: true, summary }, proposal: { summary, operation } };
     }
 
