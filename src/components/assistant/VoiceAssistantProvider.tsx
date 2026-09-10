@@ -63,7 +63,7 @@ type Conversation =
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
-  speak(options: { text: string; expectReply: boolean }): Promise<void>;
+  speak(options: { text: string; audioUrl?: string; expectReply: boolean }): Promise<void>;
   listen(): Promise<void>;
   stopListening(): Promise<void>;
   addListener(event: 'wakeCommand', listener: (data: { command: string }) => void): Promise<PluginListenerHandle>;
@@ -389,55 +389,106 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
   const speechSupported = useMemo(() => typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition), []);
 
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
   // ── speak ────────────────────────────────────────────────────────────────────
   /**
-   * Speak text. If expectReply=true, auto-start the microphone once TTS finishes
-   * (web) or tell the Android service to listen (native).
-   * CRITICAL: stops SpeechRecognition before speaking to prevent self-listening.
+   * Speak text with natural human voice. If expectReply=true, auto-starts listening
+   * once audio finishes. Plays high-quality Spanish natural voice audio via MediaPlayer
+   * on Android, and HTML5 Audio on Web, with automatic fallback to TTS if offline.
    */
   const speak = useCallback((text: string, expectReply = false) => {
     isSpeakingRef.current = true;
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
     }
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.src = '';
+      } catch { /* ignore */ }
+      currentAudioRef.current = null;
+    }
+
+    const clean = text
+      .replace(/[*#_~`>[\]()]/g, ' ')
+      .replace(/€/g, ' euros ')
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!clean) {
+      isSpeakingRef.current = false;
+      return;
+    }
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    // Prefer server route /api/assistant/tts (which concatenates multi-sentence chunks)
+    // or fallback directly to Google natural Spanish voice
+    const audioUrl = (origin && !origin.startsWith('capacitor://') && !origin.startsWith('file://'))
+      ? `${origin}/api/assistant/tts?text=${encodeURIComponent(clean)}`
+      : `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(clean.slice(0, 160))}&tl=es&client=tw-ob`;
 
     if (Capacitor.isNativePlatform()) {
-      void WakeWord.speak({ text, expectReply });
-      const approxDurationMs = Math.max(2200, (text.length / 14) * 1000 + 800);
+      void WakeWord.speak({ text: clean, audioUrl, expectReply });
+      // Fallback timeout in case native TTS fails to emit done event
+      const approxDurationMs = Math.max(2500, (clean.length / 14) * 1000 + 1000);
       setTimeout(() => {
-        isSpeakingRef.current = false;
-        if (expectReply) {
-          setListening(true);
+        if (isSpeakingRef.current) {
+          isSpeakingRef.current = false;
+          if (expectReply) {
+            setListening(true);
+          }
         }
       }, approxDurationMs);
       return;
     }
 
-    if (!('speechSynthesis' in window)) {
+    // Web platform: play natural human voice audio
+    try {
+      const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        isSpeakingRef.current = false;
+        setAwaitingReply(false);
+        if (expectReply) {
+          setTimeout(() => startListenRef.current(), 350);
+        }
+      };
+      audio.onended = finish;
+      audio.onerror = () => {
+        // Fallback to browser SpeechSynthesis if audio streaming fails
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.resume();
+          const u = new SpeechSynthesisUtterance(clean);
+          u.lang = 'es-ES';
+          u.rate = 0.95;
+          u.pitch = 1.0;
+          const voices = window.speechSynthesis.getVoices();
+          const naturalVoice = voices.find(v => v.lang.startsWith('es') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Alvaro') || v.name.includes('Elvira')));
+          if (naturalVoice) u.voice = naturalVoice;
+          u.onend = finish;
+          u.onerror = finish;
+          const approxDurationMs = Math.max(3000, (clean.length / 15) * 1000 + 4000);
+          setTimeout(finish, approxDurationMs);
+          window.speechSynthesis.speak(u);
+        } else {
+          finish();
+        }
+      };
+      audio.play().catch(() => {
+        audio.onerror?.(new Event('error'));
+      });
+    } catch {
       isSpeakingRef.current = false;
-      return;
-    }
-    // ── Stop microphone BEFORE speaking (prevents self-listening) ───────────
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.resume();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'es-ES'; u.rate = 0.95; u.pitch = 1.02;
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      isSpeakingRef.current = false;
-      setAwaitingReply(false);
       if (expectReply) {
         setTimeout(() => startListenRef.current(), 400);
       }
-    };
-    u.onend = finish;
-    u.onerror = finish;
-    // Safety fallback: if browser TTS doesn't trigger onend within estimated time + 4s
-    const approxDurationMs = Math.max(3000, (text.length / 15) * 1000 + 4000);
-    setTimeout(finish, approxDurationMs);
-    window.speechSynthesis.speak(u);
+    }
   }, []);
 
   // ── reply ────────────────────────────────────────────────────────────────────

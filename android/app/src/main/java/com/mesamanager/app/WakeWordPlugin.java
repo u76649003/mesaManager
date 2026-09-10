@@ -8,6 +8,8 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.os.Bundle;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
@@ -24,7 +26,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
 @CapacitorPlugin(
     name = "WakeWord",
@@ -37,6 +41,7 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
     private String pendingText = null;
     private boolean pendingExpectReply = false;
     private SpeechRecognizer speechRecognizer;
+    private MediaPlayer mediaPlayer;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -155,7 +160,17 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
             getContext().startService(pause);
         } catch (Exception ignored) {}
 
-        // Ensure volume is audible
+        ensureAudibleVolume();
+
+        String utteranceId = "mm-plugin-" + (expectReply ? "reply" : "final") + "-" + System.currentTimeMillis();
+        Bundle params = new Bundle();
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
+        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
+        int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+        Log.i(TAG, "tts.speak returned: " + res);
+    }
+
+    private void ensureAudibleVolume() {
         try {
             AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
             if (am != null) {
@@ -166,16 +181,87 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                 }
             }
         } catch (Exception ignored) {}
+    }
 
-        String utteranceId = "mm-plugin-" + (expectReply ? "reply" : "final") + "-" + System.currentTimeMillis();
-        Bundle params = new Bundle();
-        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
-        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
-        int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
-        Log.i(TAG, "tts.speak returned: " + res);
+    private void playAudioInternal(String audioUrl, String fallbackText, boolean expectReply) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                // 1. Stop speech recognizer while speaking to prevent self-listening
+                if (speechRecognizer != null) {
+                    try { speechRecognizer.stopListening(); } catch (Exception ignored) {}
+                }
+
+                // 2. Pause wake word service
+                try {
+                    Intent pause = new Intent(getContext(), WakeWordService.class);
+                    pause.setAction(WakeWordService.ACTION_PAUSE_LISTENING);
+                    getContext().startService(pause);
+                } catch (Exception ignored) {}
+
+                // 3. Ensure volume is audible
+                ensureAudibleVolume();
+
+                // 4. Release any existing media player
+                if (mediaPlayer != null) {
+                    try { mediaPlayer.stop(); mediaPlayer.release(); } catch (Exception ignored) {}
+                    mediaPlayer = null;
+                }
+
+                // 5. Notify listeners of TTS starting
+                JSObject data = new JSObject();
+                data.put("state", "start");
+                notifyListeners("ttsState", data, true);
+
+                // 6. Setup new MediaPlayer
+                mediaPlayer = new MediaPlayer();
+                AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+                mediaPlayer.setAudioAttributes(attrs);
+
+                Map<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                mediaPlayer.setDataSource(getContext(), Uri.parse(audioUrl), headers);
+
+                mediaPlayer.setOnPreparedListener(mp -> {
+                    try {
+                        mp.start();
+                        Log.i(TAG, "MediaPlayer successfully started natural voice audio");
+                    } catch (Exception e) {
+                        Log.e(TAG, "MediaPlayer start failed, falling back to TTS", e);
+                        speakInternal(fallbackText, expectReply);
+                    }
+                });
+
+                mediaPlayer.setOnCompletionListener(mp -> {
+                    Log.i(TAG, "MediaPlayer finished playing natural voice audio");
+                    try { mp.release(); } catch (Exception ignored) {}
+                    mediaPlayer = null;
+                    handleTtsFinished(expectReply ? "-reply-" : "-final-");
+                });
+
+                mediaPlayer.setOnErrorListener((mp, what, extra) -> {
+                    Log.w(TAG, "MediaPlayer error (what=" + what + ", extra=" + extra + "), falling back to TTS");
+                    try { mp.release(); } catch (Exception ignored) {}
+                    mediaPlayer = null;
+                    speakInternal(fallbackText, expectReply);
+                    return true;
+                });
+
+                mediaPlayer.prepareAsync();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to initialize natural audio streaming, fallback to TTS", e);
+                speakInternal(fallbackText, expectReply);
+            }
+        });
     }
 
     @Override protected void handleOnDestroy() {
+        if (mediaPlayer != null) {
+            try { mediaPlayer.stop(); mediaPlayer.release(); } catch (Exception ignored) {}
+            mediaPlayer = null;
+        }
         if (tts != null) {
             try { tts.stop(); tts.shutdown(); } catch (Exception ignored) {}
             tts = null;
@@ -228,9 +314,17 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
     @PluginMethod
     public void speak(PluginCall call) {
         String text = call.getString("text", "").trim();
-        if (text.isEmpty()) { call.resolve(); return; }
+        String audioUrl = call.getString("audioUrl", null);
+        if (text.isEmpty() && (audioUrl == null || audioUrl.trim().isEmpty())) {
+            call.resolve();
+            return;
+        }
         boolean expectReply = call.getBoolean("expectReply", true);
-        speakInternal(text, expectReply);
+        if (audioUrl != null && !audioUrl.trim().isEmpty()) {
+            playAudioInternal(audioUrl.trim(), text, expectReply);
+        } else {
+            speakInternal(text, expectReply);
+        }
         call.resolve();
     }
 
