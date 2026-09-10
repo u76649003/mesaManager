@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 
 export const assistantIntentSchema = z.discriminatedUnion('action', [
   z.object({
@@ -41,10 +41,15 @@ const numberWords: Record<string, number> = {
 };
 
 export function extractNumber(text: string): number | undefined {
-  const digit = text.match(/\b(\d{1,3})\b/);
+  // Strip indefinite articles before common nouns so "una reserva", "una mesa", "un hueco" don't become 1
+  const cleaned = text.replace(/\buna?\s+(?:reserva|mesa|cita|vez|sala|terraza|pregunta|duda)\b/gi, ' ');
+  const digit = cleaned.match(/\b(\d{1,3})\b/);
   if (digit) return Number(digit[1]);
-  const word = Object.entries(numberWords).find(([key]) => text.includes(key));
-  return word?.[1];
+  for (const [key, val] of Object.entries(numberWords)) {
+    const re = new RegExp(`\\b${key}\\b`, 'i');
+    if (re.test(cleaned)) return val;
+  }
+  return undefined;
 }
 
 function localIso(date: Date) {
@@ -231,7 +236,7 @@ export function extractConversationReply(
   const norm = raw.toLocaleLowerCase('es-ES').trim();
 
   // Global: cancel / confirm signals
-  if (/\b(cancela(r)?|para(r)?|olvida|abort[ao]|d[eé]jalo|no\s+quiero|no\s+la\s+hagas?|sal(ir)?)\b/i.test(norm)) return { cancel: true };
+  if (/\b(cancelar?|deten(er)?|olv[ií]da(lo)?|abortar?|d[eé]jalo|no\s+quiero(?:\s+nada)?|no\s+la\s+hagas?|salir)\b/i.test(norm) || /^(?:para|stop|alto)\s*[.!]?$/i.test(norm)) return { cancel: true };
   if (/^\s*(s[ií]|claro|correcto|confirmo|confirma|exacto|perfecto|adelante|ok|vale|dale|as[ií]\s+es|por\s+supuesto)\s*[.!]?\s*$/i.test(norm)) return { confirmed: true };
   if (/^\s*(no|incorrecto|mal|error|equivocado|no\s+es)\s*[.!]?\s*$/i.test(norm)) return { rejected: true };
 
@@ -297,8 +302,11 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   const partyMatches = [...text.matchAll(/(?:para|somos)\s+([a-záéíóúüñ0-9]+)|([a-záéíóúüñ0-9]+)\s*(?:personas?|pax|comensales?)/gi)];
   let partySize = partyMatches.map((match) => extractNumber(match[1] || match[2])).find((value) => value !== undefined && value >= 1 && value <= 30);
   if (!partySize) {
-    const rawNum = extractNumber(text);
-    if (rawNum && rawNum >= 1 && rawNum <= 30 && !time && !tableLabel) partySize = rawNum;
+    const isGeneralReservationPhrase = /(?:crear?|hacer?|nueva|quiero|ponme|dame)\s+(?:una\s+)?reserva/i.test(text);
+    if (!isGeneralReservationPhrase) {
+      const rawNum = extractNumber(text);
+      if (rawNum && rawNum >= 1 && rawNum <= 30 && !time && !tableLabel) partySize = rawNum;
+    }
   }
   const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
 
@@ -340,7 +348,7 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   if (hasReservationParams) {
     const nameMatch = text.match(/(?:a nombre de|nombre)\s+([a-záéíóúüñ][a-záéíóúüñ\s'-]*?)(?=\s+(?:el|para|a las?|en)\b|$)/i)?.[1]?.trim();
     const cleanName = (nameMatch && !['terraza', 'sala', 'comedor', 'interior', 'hoy', 'mañana', 'uno', 'dos', 'tres'].includes(nameMatch.toLowerCase())) ? nameMatch : undefined;
-    return { action: 'draft_reservation', tableLabel, guestName: cleanName, date: date ?? localIso(now), time, partySize };
+    return { action: 'draft_reservation', tableLabel, guestName: cleanName, date, time, partySize };
   }
 
   return { action: 'help' };

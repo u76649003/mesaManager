@@ -392,15 +392,28 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
    * CRITICAL: stops SpeechRecognition before speaking to prevent self-listening.
    */
   const speak = useCallback((text: string, expectReply = false) => {
-    if (Capacitor.isNativePlatform()) {
-      void WakeWord.speak({ text, expectReply });
-    }
-    if (!('speechSynthesis' in window)) return;
-    // ── Stop microphone BEFORE speaking (prevents self-listening) ───────────
     isSpeakingRef.current = true;
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
     }
+
+    if (Capacitor.isNativePlatform()) {
+      void WakeWord.speak({ text, expectReply });
+      const approxDurationMs = Math.max(2200, (text.length / 14) * 1000 + 800);
+      setTimeout(() => {
+        isSpeakingRef.current = false;
+        if (expectReply) {
+          setListening(true);
+        }
+      }, approxDurationMs);
+      return;
+    }
+
+    if (!('speechSynthesis' in window)) {
+      isSpeakingRef.current = false;
+      return;
+    }
+    // ── Stop microphone BEFORE speaking (prevents self-listening) ───────────
     window.speechSynthesis.cancel();
     window.speechSynthesis.resume();
     const u = new SpeechSynthesisUtterance(text);
@@ -535,7 +548,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
     // ── Explicit cancellation during conversation ────────────────────────────
     const normCmd = command.toLocaleLowerCase('es-ES').trim();
-    if (/^(cancela|cancelar|para|olvida|descarta|detener)\b/i.test(normCmd)) {
+    if (/^(cancela|cancelar|olvida|descarta|descartar|detener)\b/i.test(normCmd) || /^(?:para|stop|alto)\s*[.!]?$/i.test(normCmd)) {
       conversationRef.current = null;
       setDraftProgress(null);
       if (aiSessionRef.current) clearSession(aiSessionRef.current, '');
@@ -1026,21 +1039,31 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       // If all fields are already present, process immediately
       if (draft.tableLabel && draft.partySize && draft.date && draft.time && draft.guestName) { void answerRef.current(command); return; }
 
-      const details: string[] = [];
-      if (draft.guestName) details.push(`a nombre de ${draft.guestName}`);
-      if (draft.time) details.push(`para las ${draft.time}`);
-      if (draft.date) details.push(`el ${draft.date}`);
-      if (draft.partySize) details.push(`para ${draft.partySize} personas`);
-      if (draft.tableLabel) details.push(`en mesa ${draft.tableLabel}`);
+      if (!draft.guestName && !draft.partySize && !draft.date && !draft.time) {
+        message = '¡Por supuesto! ¿A nombre de quién pongo la reserva y para cuántas personas sería?';
+      } else {
+        const details: string[] = [];
+        if (draft.guestName) details.push(`a nombre de ${draft.guestName}`);
+        if (draft.partySize) details.push(`para ${draft.partySize} personas`);
+        if (draft.date) details.push(`el ${draft.date}`);
+        if (draft.time) details.push(`a las ${draft.time}`);
+        if (draft.tableLabel) details.push(`en mesa ${draft.tableLabel}`);
 
-      const prefix = details.length > 0 ? `Tomada nota: ${details.join(', ')}. ` : '';
-      const promptText = !draft.tableLabel ? (rooms.length > 1 ? `¿En qué salón o mesa quieres reservar?` : '¿En qué mesa te gustaría?')
-        : !draft.partySize ? '¿Para cuántas personas?'
-        : !draft.date ? '¿Para qué día?'
-        : !draft.time ? '¿A qué hora?'
-        : '¿A nombre de quién?';
+        const prefix = details.length > 0 ? `Tomada nota: ${details.join(', ')}. ` : '';
+        const promptText = !draft.guestName
+          ? (!draft.partySize ? '¿A nombre de quién la ponemos y para cuántas personas?' : '¿A nombre de quién pongo la reserva?')
+          : !draft.partySize
+          ? '¿Para cuántas personas sería?'
+          : !draft.date
+          ? '¿Para qué día la necesitas?'
+          : !draft.time
+          ? '¿A qué hora prefieres?'
+          : rooms.length > 1
+          ? '¿Prefieres algún salón o mesa en concreto?'
+          : '¿En qué mesa te gustaría?';
 
-      message = `${prefix}${promptText}`;
+        message = `${prefix}${promptText}`;
+      }
     } else if (intent.action === 'help') {
       // Even when the parser gives up, try to detect a specific intent by keyword
       if (/(sienta|sentar|acomoda)/i.test(command)) {

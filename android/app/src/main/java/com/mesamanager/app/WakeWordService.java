@@ -83,9 +83,8 @@ public class WakeWordService extends Service implements RecognitionListener {
                 tts.setLanguage(new Locale("es", "ES"));
                 Voice best = tts.getVoices() == null ? null : tts.getVoices().stream()
                     .filter(v -> v.getLocale() != null && "es".equals(v.getLocale().getLanguage()))
-                    .max(Comparator
-                        .comparingInt(Voice::getQuality)
-                        .thenComparingInt(v -> v.isNetworkConnectionRequired() ? 0 : 1))
+                    .filter(v -> !v.isNetworkConnectionRequired())
+                    .max(Comparator.comparingInt(Voice::getQuality))
                     .orElse(null);
                 if (best != null) tts.setVoice(best);
                 tts.setSpeechRate(0.94f);
@@ -119,6 +118,7 @@ public class WakeWordService extends Service implements RecognitionListener {
             return START_NOT_STICKY;
         }
         if (ACTION_SPEAK.equals(intent.getAction())) {
+            startForeground(NOTIFICATION_ID, notification("Asistente hablando..."));
             doSpeak(intent.getStringExtra(EXTRA_TEXT), intent.getBooleanExtra(EXTRA_EXPECT_REPLY, true));
             return START_STICKY;
         }
@@ -247,12 +247,12 @@ public class WakeWordService extends Service implements RecognitionListener {
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build();
-                    android.media.AudioFocusRequest afr = new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    android.media.AudioFocusRequest afr = new android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                         .setAudioAttributes(attrs)
                         .build();
                     am.requestAudioFocus(afr);
                 } else {
-                    am.requestAudioFocus(null, android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+                    am.requestAudioFocus(null, android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
                 }
             }
         } catch (Exception ignored) {}
@@ -291,6 +291,7 @@ public class WakeWordService extends Service implements RecognitionListener {
 
         try {
             Bundle params = new Bundle();
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC);
             int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, uid);
             if (res != TextToSpeech.SUCCESS) {

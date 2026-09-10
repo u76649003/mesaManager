@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseAssistantIntent } from './intents.ts';
+import { parseAssistantIntent, extractTime } from './intents';
 
 test('parses a complete create proposal without confusing time with party size', () => {
   assert.deepEqual(parseAssistantIntent('Crea una reserva para Laura 2026-08-23 21:00 para 4'), {
@@ -50,11 +50,9 @@ test('understands free tables by voice', () => {
 });
 
 test('parses standalone party size utterances like 4 personas', () => {
-  assert.equal(parseAssistantIntent('4 personas').partySize, 4);
-  assert.equal(parseAssistantIntent('somos 4').partySize, 4);
+  assert.equal((parseAssistantIntent('4 personas') as { partySize?: number }).partySize, 4);
+  assert.equal((parseAssistantIntent('somos 4') as { partySize?: number }).partySize, 4);
 });
-
-import { extractTime } from './intents';
 
 test('parses spoken Spanish hours correctly', () => {
   assert.equal(extractTime('reserva a la una de la tarde'), '13:00');
