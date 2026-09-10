@@ -336,8 +336,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // inactivity timer
 
   // ── State ────────────────────────────────────────────────────────────────────
-  const [assistantName, setAssistantName] = useState('');
-  const [draftName,     setDraftName]     = useState('');
+  const [assistantName, setAssistantName] = useState('Mesa');
+  const [draftName,     setDraftName]     = useState('Mesa');
   const [tenantId,      setTenantId]      = useState('');
   const [canConfigure,  setCanConfigure]  = useState(false);
   const [ready,         setReady]         = useState(false);
@@ -361,15 +361,20 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     if (isAuthPage) return;
     loadAssistantConfiguration().then((config) => {
       if (config) {
-        setAssistantName(config.assistant_enabled ? config.assistant_name ?? '' : '');
-        setDraftName(config.assistant_name ?? '');
+        const name = (config.assistant_name && config.assistant_name.trim()) || 'Mesa';
+        setAssistantName(name);
+        setDraftName(name);
         setTenantId(config.tenantId);
         setCanConfigure(config.canConfigure);
         // Load persisted style profile for this tenant
         styleKeyRef.current = `${STYLE_LS_KEY}-${config.tenantId}`;
         styleRef.current = loadStyle(styleKeyRef.current);
+      } else {
+        setAssistantName('Mesa');
       }
-    }).catch(() => setResponse('No se pudo cargar la configuración del asistente.')).finally(() => setReady(true));
+    }).catch(() => {
+      setAssistantName('Mesa');
+    }).finally(() => setReady(true));
   }, [isAuthPage]);
 
   useEffect(() => {
@@ -431,24 +436,12 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     speak(message, expectReply);
   }, [speak]);
 
-  // ── Auto-start mic on first load ─────────────────────────────────────────
-  // On web: open widget + start SpeechRecognition immediately.
-  // On native: speak a greeting with expectReply=true so after TTS the service
-  //            automatically enters awaitingCommand mode (no wake phrase needed).
+  // ── Background initialization (silent, no intrusive popup on page load) ───
   useEffect(() => {
-    if (!ready || isAuthPage || !assistantName || autoStartedRef.current) return;
+    if (!ready || isAuthPage || autoStartedRef.current) return;
     autoStartedRef.current = true;
-    setOpen(true);
-    if (Capacitor.isNativePlatform()) {
-      // Small delay to let the WakeWordService initialise TTS fully
-      const t = setTimeout(() => reply('Hola, estoy lista. \u00bfEn qu\u00e9 te ayudo?'), 1400);
-      return () => clearTimeout(t);
-    } else {
-      // Web: open widget and kick off microphone after browser is settled
-      const t = setTimeout(() => startListenRef.current(), 900);
-      return () => clearTimeout(t);
-    }
-  }, [ready, isAuthPage, assistantName, reply]);
+    // Keep widget closed by default. The user activates it with "Ey Mesa" or by tapping the mic button.
+  }, [ready, isAuthPage]);
 
   // ── buildProposal ─────────────────────────────────────────────────────────────
   const buildProposal = useCallback(async (intent: AssistantMutationIntent): Promise<PendingProposal> => {
@@ -1291,40 +1284,42 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   // ── Render ────────────────────────────────────────────────────────────────
   return <>{children}
 
-    {/* ── Setup modal (first launch) ── */}
-    {ready && !isAuthPage && !assistantName && (
-      <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-        <div className="w-full max-w-md rounded-3xl border border-violet-400/20 bg-slate-900 p-6 shadow-2xl">
-          <Sparkles className="mb-4 h-8 w-8 text-violet-400"/>
-          <h2 className="text-xl font-semibold text-white">Configura el asistente del restaurante</h2>
-          <p className="mt-2 text-sm text-slate-300">Este nombre será compartido por todo el equipo.</p>
-          <input autoFocus value={draftName} onChange={(e) => setDraftName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveName()} disabled={!canConfigure} placeholder={canConfigure ? 'Ej. Mara' : 'Pide al encargado que lo configure'} className="mt-5 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white"/>
-          <button onClick={saveName} disabled={!canConfigure || working} className="mt-4 w-full rounded-xl bg-violet-500 px-4 py-3 font-semibold text-white disabled:opacity-40">Guardar y activar</button>
-          {response && <p className="mt-3 text-sm text-amber-300">{response}</p>}
-        </div>
-      </div>
-    )}
-
-    {/* ── Floating widget ── */}
-    {ready && !isAuthPage && assistantName && (
+    {/* ── Floating AI Agent widget ── */}
+    {ready && !isAuthPage && (
       <div className="fixed bottom-5 right-5 z-[90] flex flex-col items-end gap-3">
 
         {open && (
-          <div className="w-[min(92vw,400px)] rounded-2xl border border-slate-700 bg-slate-900/95 p-4 text-white shadow-2xl">
+          <div className="w-[min(92vw,400px)] rounded-3xl border border-violet-500/30 bg-slate-900/95 p-4 text-white shadow-2xl backdrop-blur-xl ring-1 ring-violet-500/20">
             {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 font-semibold">
-                <Sparkles className="h-4 w-4 text-violet-400"/>{assistantName}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5 font-semibold">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-fuchsia-500 shadow-lg shadow-violet-500/30">
+                  <Sparkles className="h-4 w-4 text-white animate-pulse"/>
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-bold text-white tracking-wide">{assistantName || 'Mesa'}</span>
+                    <span className="rounded-full bg-violet-500/25 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-violet-300 ring-1 ring-violet-400/30">
+                      Agente IA
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-medium">Asistente por voz inteligente</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
                 {draftProgress && (
-                  <span className="ml-1 rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-normal text-violet-300">
-                    Reserva en curso
+                  <span className="mr-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                    Reserva activa
                   </span>
                 )}
+                <button
+                  aria-label="Cerrar"
+                  onClick={() => setOpen(false)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+                >
+                  <X className="h-4 w-4"/>
+                </button>
               </div>
-              <button aria-label="Cerrar" onClick={() => {
-                setOpen(false);
-                // Optionally cancel in-progress reservation on close
-              }}><X className="h-4 w-4"/></button>
             </div>
 
             {/* Reservation progress chips — shown while filling a reservation draft */}

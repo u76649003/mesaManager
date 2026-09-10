@@ -45,7 +45,7 @@ public class WakeWordService extends Service implements RecognitionListener {
     private Runnable         ttsWatchdog;
     private SpeechRecognizer recognizer;
     private Intent           recognitionIntent;
-    private String           wakePhrase = "ey mara";
+    private String           wakePhrase = "ey mesa";
     private boolean          awaitingCommand  = false;
     private boolean          wakeAcknowledged = false;
     private boolean          stopping = false;
