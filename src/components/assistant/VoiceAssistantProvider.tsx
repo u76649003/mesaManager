@@ -65,6 +65,7 @@ type WakeWordPluginApi = {
   stop(): Promise<{ active: boolean }>;
   speak(options: { text: string; expectReply: boolean }): Promise<void>;
   addListener(event: 'wakeCommand', listener: (data: { command: string }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'ttsState', listener: (data: { state: 'start' | 'done'; expectReply?: boolean }) => void): Promise<PluginListenerHandle>;
 };
 const WakeWord = registerPlugin<WakeWordPluginApi>('WakeWord');
 const capacity = (table: Table) => table.capacity ?? table.table_type?.capacity ?? 0;
@@ -628,7 +629,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     if (conversationRef.current !== null) {
       const isTopLevelQuery =
         ['list_free_tables', 'list_today_reservations', 'list_reservations_date', 'recommend_table', 'check_table', 'cancel_reservation', 'seat_reservation'].includes(freshIntent.action) ||
-        (freshIntent.action === 'draft_reservation' && (freshIntent.tableLabel || freshIntent.partySize || freshIntent.date || freshIntent.time));
+        (conversationRef.current.kind !== 'reservation' && freshIntent.action === 'draft_reservation' && (freshIntent.tableLabel || freshIntent.partySize || freshIntent.date || freshIntent.time));
 
       // Also detect clear question keywords like "qué mesas", "cuáles", "hay disponibles", "ayuda"
       const isExplicitQuestion = /\b(qu[eé]\s+mesas?|cu[aá]les|hay\s+disponibles?|qu[eé]\s+reservas?|ayuda)\b/i.test(command);
@@ -1178,11 +1179,25 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         void answerRef.current(command);
       }
     }).then((h) => { if (cancelled) void h.remove(); else listener = h; });
+
+    let ttsListener: PluginListenerHandle | undefined;
+    WakeWord.addListener('ttsState', ({ state, expectReply: exp }) => {
+      if (state === 'start') {
+        isSpeakingRef.current = true;
+      } else if (state === 'done') {
+        isSpeakingRef.current = false;
+        setAwaitingReply(false);
+        if (exp) {
+          setListening(true);
+        }
+      }
+    }).then((h) => { if (cancelled) void h.remove(); else ttsListener = h; });
+
     WakeWord.start({ name: assistantName }).then(() => setHandsFree(true)).catch((e) => {
       setHandsFree(false);
       setResponse(e instanceof Error ? e.message : `Activa el permiso de micrófono para usar "Ey ${assistantName}".`);
     });
-    return () => { cancelled = true; void listener?.remove(); };
+    return () => { cancelled = true; void listener?.remove(); void ttsListener?.remove(); };
   }, [assistantName, isAuthPage, reply]);
 
   // ── confirm ───────────────────────────────────────────────────────────────

@@ -28,6 +28,8 @@ public class WakeWordService extends Service implements RecognitionListener {
     public static final String ACTION_STOP    = "com.mesamanager.app.WAKE_STOP";
     public static final String ACTION_COMMAND = "com.mesamanager.app.WAKE_COMMAND";
     public static final String ACTION_SPEAK   = "com.mesamanager.app.WAKE_SPEAK";
+    public static final String ACTION_PAUSE_LISTENING  = "com.mesamanager.app.WAKE_PAUSE_LISTENING";
+    public static final String ACTION_RESUME_LISTENING = "com.mesamanager.app.WAKE_RESUME_LISTENING";
     public static final String EXTRA_NAME    = "assistantName";
     public static final String EXTRA_COMMAND = "command";
     public static final String EXTRA_TEXT    = "text";
@@ -71,8 +73,11 @@ public class WakeWordService extends Service implements RecognitionListener {
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
 
-        tts = new TextToSpeech(this, status -> {
-            if (status != TextToSpeech.SUCCESS) return;
+        tts = new TextToSpeech(getApplicationContext(), status -> {
+            if (status != TextToSpeech.SUCCESS) {
+                android.util.Log.e("WakeWordService", "TTS onInit failed: " + status);
+                return;
+            }
             ttsReady = true;
             try {
                 AudioAttributes attrs = new AudioAttributes.Builder()
@@ -80,7 +85,10 @@ public class WakeWordService extends Service implements RecognitionListener {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build();
                 tts.setAudioAttributes(attrs);
-                tts.setLanguage(new Locale("es", "ES"));
+                int res = tts.setLanguage(new Locale("es", "ES"));
+                if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts.setLanguage(new Locale("es"));
+                }
                 Voice best = tts.getVoices() == null ? null : tts.getVoices().stream()
                     .filter(v -> v.getLocale() != null && "es".equals(v.getLocale().getLanguage()))
                     .filter(v -> !v.isNetworkConnectionRequired())
@@ -120,6 +128,23 @@ public class WakeWordService extends Service implements RecognitionListener {
         if (ACTION_SPEAK.equals(intent.getAction())) {
             startForeground(NOTIFICATION_ID, notification("Asistente hablando..."));
             doSpeak(intent.getStringExtra(EXTRA_TEXT), intent.getBooleanExtra(EXTRA_EXPECT_REPLY, true));
+            return START_STICKY;
+        }
+        if (ACTION_PAUSE_LISTENING.equals(intent.getAction())) {
+            stopListening();
+            return START_STICKY;
+        }
+        if (ACTION_RESUME_LISTENING.equals(intent.getAction())) {
+            boolean expectReply = intent.getBooleanExtra(EXTRA_EXPECT_REPLY, true);
+            if (expectReply) {
+                awaitingCommand = true;
+                wakeAcknowledged = true;
+                promptPauseUntil = System.currentTimeMillis() + POST_SPEAK_DELAY_MS;
+                mainHandler.postDelayed(this::startListening, POST_SPEAK_DELAY_MS);
+                updateNotification("Te escucho...");
+            } else {
+                scheduleRestart();
+            }
             return START_STICKY;
         }
         // ACTION_START (or restart)

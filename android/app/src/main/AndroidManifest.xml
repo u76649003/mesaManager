@@ -38,8 +38,15 @@
             android:name=".WakeWordService"
             android:exported="false"
             android:stopWithTask="true"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaPlayback" />
     </application>
+
+    <!-- Package Visibility for TextToSpeech engine on Android 11+ -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <!-- Permissions -->
 
@@ -47,6 +54,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Needed to read model files from app private storage on some Android versions -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
