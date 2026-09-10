@@ -11,6 +11,12 @@ public class MainActivity extends BridgeActivity {
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
                 this.bridge.getWebView().clearCache(true);
+                this.bridge.getWebView().setWebChromeClient(new android.webkit.WebChromeClient() {
+                    @Override
+                    public void onPermissionRequest(final android.webkit.PermissionRequest request) {
+                        runOnUiThread(() -> request.grant(request.getResources()));
+                    }
+                });
             }
         } catch (Exception ignored) {}
     }

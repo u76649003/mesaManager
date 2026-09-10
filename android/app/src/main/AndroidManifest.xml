@@ -41,10 +41,13 @@
             android:foregroundServiceType="microphone|mediaPlayback" />
     </application>
 
-    <!-- Package Visibility for TextToSpeech engine on Android 11+ -->
+    <!-- Package Visibility for TextToSpeech and SpeechRecognizer on Android 11+ -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
     </queries>
 

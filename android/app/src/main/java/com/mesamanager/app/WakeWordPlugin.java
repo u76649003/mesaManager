@@ -6,8 +6,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.os.Bundle;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
@@ -19,6 +23,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.util.ArrayList;
 import java.util.Locale;
 
 @CapacitorPlugin(
@@ -31,6 +36,7 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
     private boolean ttsReady = false;
     private String pendingText = null;
     private boolean pendingExpectReply = false;
+    private SpeechRecognizer speechRecognizer;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -63,9 +69,18 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
         if (status == TextToSpeech.SUCCESS && tts != null) {
             ttsReady = true;
             try {
+                AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+                tts.setAudioAttributes(attrs);
+
                 int res = tts.setLanguage(new Locale("es", "ES"));
                 if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts.setLanguage(new Locale("es"));
+                    res = tts.setLanguage(new Locale("es"));
+                    if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        tts.setLanguage(Locale.getDefault());
+                    }
                 }
                 tts.setSpeechRate(0.95f);
                 tts.setPitch(1.0f);
@@ -105,6 +120,11 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
         data.put("expectReply", expectReply);
         notifyListeners("ttsState", data, true);
 
+        if (expectReply) {
+            // Auto-start listening on the main thread for fluid voice conversation
+            getActivity().runOnUiThread(() -> startListeningNative(null));
+        }
+
         try {
             Intent resume = new Intent(getContext(), WakeWordService.class);
             resume.setAction(WakeWordService.ACTION_RESUME_LISTENING);
@@ -120,6 +140,13 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
             pendingExpectReply = expectReply;
             return;
         }
+
+        // Stop active speech recognition while speaking
+        getActivity().runOnUiThread(() -> {
+            if (speechRecognizer != null) {
+                try { speechRecognizer.stopListening(); } catch (Exception ignored) {}
+            }
+        });
 
         // Tell WakeWordService to stop listening while TTS is speaking to prevent self-listening
         try {
@@ -144,7 +171,8 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
         Bundle params = new Bundle();
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f);
         params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+        int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+        Log.i(TAG, "tts.speak returned: " + res);
     }
 
     @Override protected void handleOnDestroy() {
@@ -152,6 +180,12 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
             try { tts.stop(); tts.shutdown(); } catch (Exception ignored) {}
             tts = null;
         }
+        getActivity().runOnUiThread(() -> {
+            if (speechRecognizer != null) {
+                try { speechRecognizer.cancel(); speechRecognizer.destroy(); } catch (Exception ignored) {}
+                speechRecognizer = null;
+            }
+        });
         try { getContext().unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) {}
         try { getContext().stopService(new Intent(getContext(), WakeWordService.class)); } catch (Exception ignored) {}
     }
@@ -198,5 +232,104 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
         boolean expectReply = call.getBoolean("expectReply", true);
         speakInternal(text, expectReply);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void listen(PluginCall call) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissionForAlias("microphone", call, "listenPermissionGranted");
+            return;
+        }
+        startListeningNative(call);
+    }
+
+    @PermissionCallback
+    private void listenPermissionGranted(PluginCall call) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            call.reject("Se necesita permiso de micrófono.");
+            return;
+        }
+        startListeningNative(call);
+    }
+
+    private void startListeningNative(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (tts != null && tts.isSpeaking()) {
+                    tts.stop();
+                }
+
+                if (speechRecognizer == null) {
+                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+                    speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                        @Override public void onReadyForSpeech(Bundle params) {
+                            JSObject data = new JSObject(); data.put("state", "ready");
+                            notifyListeners("listeningState", data, true);
+                        }
+                        @Override public void onBeginningOfSpeech() {
+                            JSObject data = new JSObject(); data.put("state", "speaking");
+                            notifyListeners("listeningState", data, true);
+                        }
+                        @Override public void onRmsChanged(float rmsdB) {}
+                        @Override public void onBufferReceived(byte[] buffer) {}
+                        @Override public void onEndOfSpeech() {
+                            JSObject data = new JSObject(); data.put("state", "end");
+                            notifyListeners("listeningState", data, true);
+                        }
+                        @Override public void onError(int error) {
+                            Log.w(TAG, "Native SpeechRecognizer error: " + error);
+                            JSObject data = new JSObject(); data.put("state", "error"); data.put("error", error);
+                            notifyListeners("listeningState", data, true);
+                        }
+                        @Override public void onResults(Bundle results) {
+                            ArrayList<String> matches = results != null ? results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
+                            if (matches != null && !matches.isEmpty()) {
+                                String recognized = matches.get(0).trim();
+                                if (!recognized.isEmpty()) {
+                                    Log.i(TAG, "Native SpeechRecognizer result: " + recognized);
+                                    JSObject data = new JSObject();
+                                    data.put("command", recognized);
+                                    notifyListeners("wakeCommand", data, true);
+                                }
+                            }
+                            JSObject data = new JSObject(); data.put("state", "idle");
+                            notifyListeners("listeningState", data, true);
+                        }
+                        @Override public void onPartialResults(Bundle partialResults) {
+                            ArrayList<String> matches = partialResults != null ? partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
+                            if (matches != null && !matches.isEmpty()) {
+                                JSObject data = new JSObject();
+                                data.put("partial", matches.get(0));
+                                notifyListeners("listeningState", data, true);
+                            }
+                        }
+                        @Override public void onEvent(int eventType, Bundle params) {}
+                    });
+                }
+
+                Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
+                intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+                intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+                speechRecognizer.startListening(intent);
+                Log.i(TAG, "Native SpeechRecognizer listening started");
+
+                if (call != null) call.resolve();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to start native SpeechRecognizer", e);
+                if (call != null) call.reject("Error al iniciar escucha: " + e.getMessage());
+            }
+        });
+    }
+
+    @PluginMethod
+    public void stopListening(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (speechRecognizer != null) {
+                try { speechRecognizer.stopListening(); } catch (Exception ignored) {}
+            }
+            if (call != null) call.resolve();
+        });
     }
 }

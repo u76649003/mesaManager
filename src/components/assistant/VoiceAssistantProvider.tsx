@@ -64,8 +64,11 @@ type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
   speak(options: { text: string; expectReply: boolean }): Promise<void>;
+  listen(): Promise<void>;
+  stopListening(): Promise<void>;
   addListener(event: 'wakeCommand', listener: (data: { command: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'ttsState', listener: (data: { state: 'start' | 'done'; expectReply?: boolean }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'listeningState', listener: (data: { state: 'ready' | 'speaking' | 'end' | 'idle' | 'error'; partial?: string; error?: number }) => void): Promise<PluginListenerHandle>;
 };
 const WakeWord = registerPlugin<WakeWordPluginApi>('WakeWord');
 const capacity = (table: Table) => table.capacity ?? table.table_type?.capacity ?? 0;
@@ -1174,6 +1177,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         return;
       }
       if (command) {
+        setListening(false);
         setTranscript(command);
         setOpen(true);
         void answerRef.current(command);
@@ -1193,11 +1197,23 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       }
     }).then((h) => { if (cancelled) void h.remove(); else ttsListener = h; });
 
+    let speechListener: PluginListenerHandle | undefined;
+    WakeWord.addListener('listeningState', ({ state, partial }) => {
+      if (state === 'speaking' || state === 'ready') {
+        setListening(true);
+      } else if (state === 'idle' || state === 'error') {
+        setListening(false);
+      }
+      if (partial) {
+        setTranscript(partial);
+      }
+    }).then((h) => { if (cancelled) void h.remove(); else speechListener = h; });
+
     WakeWord.start({ name: assistantName }).then(() => setHandsFree(true)).catch((e) => {
       setHandsFree(false);
       setResponse(e instanceof Error ? e.message : `Activa el permiso de micrófono para usar "Ey ${assistantName}".`);
     });
-    return () => { cancelled = true; void listener?.remove(); void ttsListener?.remove(); };
+    return () => { cancelled = true; void listener?.remove(); void ttsListener?.remove(); void speechListener?.remove(); };
   }, [assistantName, isAuthPage, reply]);
 
   // ── confirm ───────────────────────────────────────────────────────────────
@@ -1230,7 +1246,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   useEffect(() => { confirmRef.current = confirm; }, [confirm]);
 
   // ── startListening ────────────────────────────────────────────────────────
-  /** Start the Web Speech API recognizer. On result, auto-calls answer().
+  /** Start the recognizer (native SpeechRecognizer on mobile, Web Speech API on desktop).
    * Guards against starting while TTS is speaking to prevent self-listening.
    */
   const startListening = useCallback(() => {
@@ -1239,6 +1255,18 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       console.info('[VA] Skipping startListening: TTS still speaking');
       return;
     }
+    setOpen(true);
+    setTranscript('');
+
+    if (Capacitor.isNativePlatform()) {
+      setListening(true);
+      void WakeWord.listen().catch((err) => {
+        console.warn('[VA] Native listen error:', err);
+        setListening(false);
+      });
+      return;
+    }
+
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Ctor) { setOpen(true); reply('El reconocimiento de voz no está disponible. Escribe la orden.'); return; }
     // Reuse existing recognition instance if already running
@@ -1249,19 +1277,16 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     recognition.lang = 'es-ES'; recognition.interimResults = false; recognition.continuous = false;
     recognition.onresult = (e) => {
       const text = e.results[0][0].transcript;
-      // Ignore if TTS is speaking (safety guard)
       if (isSpeakingRef.current) {
         console.info('[VA] Ignoring recognition result: TTS speaking');
         return;
       }
       setTranscript(text); setOpen(true); setAwaitingReply(false);
-      // Auto-process: no button press needed
       void answerRef.current(text);
     };
     recognition.onend = () => setListening(false);
     recognition.onerror = () => {
       setListening(false); setAwaitingReply(false);
-      // Only report error if not caused by our own TTS stop
       if (!isSpeakingRef.current) {
         reply('No he podido escuchar. Puedes escribir la orden o intentarlo de nuevo.');
       }
@@ -1271,6 +1296,18 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     setListening(true); setOpen(true);
   }, [reply]);
   useEffect(() => { startListenRef.current = startListening; }, [startListening]);
+
+  const stopListening = useCallback(() => {
+    setListening(false);
+    setAwaitingReply(false);
+    if (Capacitor.isNativePlatform()) {
+      void WakeWord.stopListening();
+      return;
+    }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch { /* ignore */ }
+    }
+  }, []);
 
   // ── Session inactivity timeout ───────────────────────────────────────────────
   // If the AI session is open but there's been no activity for SESSION_TIMEOUT_MS,
@@ -1450,7 +1487,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         {/* FAB mic button */}
         <button
           aria-label="Hablar"
-          onClick={() => listening ? recognitionRef.current?.stop() : startListening()}
+          onClick={() => listening ? stopListening() : startListening()}
           className={`grid h-14 w-14 place-items-center rounded-full text-white shadow-xl transition-colors ${
             listening ? 'animate-pulse bg-red-500' : awaitingReply ? 'animate-pulse bg-violet-600' : 'bg-violet-500'
           }`}
