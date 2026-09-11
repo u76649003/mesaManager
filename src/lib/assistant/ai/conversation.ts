@@ -81,12 +81,23 @@ export function clearSession(session: ConversationSession, systemPrompt: string)
 // ── End-of-conversation detection ───────────────────────────
 const END_PHRASES = [
   'gracias', 'de acuerdo gracias', 'perfecto gracias', 'muchas gracias',
-  'eso es todo', 'ya está', 'ya está todo', 'terminamos', 'fin',
+  'eso es todo', 'ya está todo', 'terminamos',
   'adiós', 'hasta luego', 'hasta pronto', 'chao', 'bye',
-  'para', 'para ya', 'stop',
+  'para ya', 'stop', 'alto', 'cancelar', 'nada más',
 ];
 
 export function isEndOfSession(text: string): boolean {
   const norm = text.toLocaleLowerCase('es-ES').trim();
-  return END_PHRASES.some((phrase) => norm === phrase || norm.startsWith(phrase + ' ') || norm.endsWith(' ' + phrase));
+  // Guard: Never treat utterances containing numbers, dates, times, or reservation details as end of session
+  const containsReservationData =
+    /\b(\d+|persona|personas|comensal|comensales|pax|hoy|mañana|pasado|lunes|martes|miércoles|jueves|viernes|sábado|domingo|mesa|reserva|a\s+las?|noche|tarde|mediodía)\b/i.test(norm);
+  if (containsReservationData) return false;
+
+  return END_PHRASES.some((phrase) =>
+    norm === phrase ||
+    norm === phrase + '.' ||
+    norm === phrase + '!' ||
+    norm.startsWith(phrase + ' ') ||
+    norm.endsWith(' ' + phrase)
+  );
 }

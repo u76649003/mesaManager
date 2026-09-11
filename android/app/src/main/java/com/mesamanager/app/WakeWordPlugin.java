@@ -16,6 +16,7 @@ import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
 import android.util.Log;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
@@ -87,8 +88,32 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                         tts.setLanguage(Locale.getDefault());
                     }
                 }
-                tts.setSpeechRate(0.95f);
-                tts.setPitch(1.0f);
+
+                // Select natural high quality Spanish voice if available
+                try {
+                    if (tts.getVoices() != null) {
+                        Voice bestVoice = null;
+                        for (Voice voice : tts.getVoices()) {
+                            if (voice.getLocale() != null && "es".equalsIgnoreCase(voice.getLocale().getLanguage())) {
+                                if (voice.getQuality() == Voice.QUALITY_VERY_HIGH || voice.getName().contains("network") || voice.getName().contains("ana") || voice.getName().contains("eed")) {
+                                    bestVoice = voice;
+                                    break;
+                                } else if (bestVoice == null || voice.getQuality() > bestVoice.getQuality()) {
+                                    bestVoice = voice;
+                                }
+                            }
+                        }
+                        if (bestVoice != null) {
+                            tts.setVoice(bestVoice);
+                            Log.i(TAG, "Selected natural TTS voice: " + bestVoice.getName());
+                        }
+                    }
+                } catch (Exception vErr) {
+                    Log.w(TAG, "Failed selecting custom voice: " + vErr.getMessage());
+                }
+
+                tts.setSpeechRate(0.96f);
+                tts.setPitch(1.02f);
             } catch (Exception e) {
                 Log.w(TAG, "TTS locale error", e);
             }
@@ -221,10 +246,24 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                 mediaPlayer.setAudioAttributes(attrs);
 
                 Map<String, String> headers = new HashMap<>();
-                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0");
                 mediaPlayer.setDataSource(getContext(), Uri.parse(audioUrl), headers);
 
+                final boolean[] prepared = { false };
+                android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+                Runnable timeoutRunnable = () -> {
+                    if (!prepared[0] && mediaPlayer != null) {
+                        Log.w(TAG, "MediaPlayer prepare timeout — falling back to TTS without lag");
+                        try { mediaPlayer.reset(); mediaPlayer.release(); } catch (Exception ignored) {}
+                        mediaPlayer = null;
+                        speakInternal(fallbackText, expectReply);
+                    }
+                };
+                handler.postDelayed(timeoutRunnable, 3000);
+
                 mediaPlayer.setOnPreparedListener(mp -> {
+                    prepared[0] = true;
+                    handler.removeCallbacks(timeoutRunnable);
                     try {
                         mp.start();
                         Log.i(TAG, "MediaPlayer successfully started natural voice audio");
@@ -235,6 +274,7 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                 });
 
                 mediaPlayer.setOnCompletionListener(mp -> {
+                    handler.removeCallbacks(timeoutRunnable);
                     Log.i(TAG, "MediaPlayer finished playing natural voice audio");
                     try { mp.release(); } catch (Exception ignored) {}
                     mediaPlayer = null;
@@ -242,6 +282,7 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                 });
 
                 mediaPlayer.setOnErrorListener((mp, what, extra) -> {
+                    handler.removeCallbacks(timeoutRunnable);
                     Log.w(TAG, "MediaPlayer error (what=" + what + ", extra=" + extra + "), falling back to TTS");
                     try { mp.release(); } catch (Exception ignored) {}
                     mediaPlayer = null;
@@ -349,57 +390,86 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
     private void startListeningNative(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             try {
+                // 1. Pause background WakeWordService so native SpeechRecognizer gets exclusive access to microphone
+                try {
+                    Intent pause = new Intent(getContext(), WakeWordService.class);
+                    pause.setAction(WakeWordService.ACTION_PAUSE_LISTENING);
+                    getContext().startService(pause);
+                } catch (Exception ignored) {}
+
+                // 2. Stop TTS if speaking
                 if (tts != null && tts.isSpeaking()) {
                     tts.stop();
                 }
 
-                if (speechRecognizer == null) {
-                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-                    speechRecognizer.setRecognitionListener(new RecognitionListener() {
-                        @Override public void onReadyForSpeech(Bundle params) {
-                            JSObject data = new JSObject(); data.put("state", "ready");
-                            notifyListeners("listeningState", data, true);
-                        }
-                        @Override public void onBeginningOfSpeech() {
-                            JSObject data = new JSObject(); data.put("state", "speaking");
-                            notifyListeners("listeningState", data, true);
-                        }
-                        @Override public void onRmsChanged(float rmsdB) {}
-                        @Override public void onBufferReceived(byte[] buffer) {}
-                        @Override public void onEndOfSpeech() {
-                            JSObject data = new JSObject(); data.put("state", "end");
-                            notifyListeners("listeningState", data, true);
-                        }
-                        @Override public void onError(int error) {
-                            Log.w(TAG, "Native SpeechRecognizer error: " + error);
-                            JSObject data = new JSObject(); data.put("state", "error"); data.put("error", error);
-                            notifyListeners("listeningState", data, true);
-                        }
-                        @Override public void onResults(Bundle results) {
-                            ArrayList<String> matches = results != null ? results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
-                            if (matches != null && !matches.isEmpty()) {
-                                String recognized = matches.get(0).trim();
-                                if (!recognized.isEmpty()) {
-                                    Log.i(TAG, "Native SpeechRecognizer result: " + recognized);
-                                    JSObject data = new JSObject();
-                                    data.put("command", recognized);
-                                    notifyListeners("wakeCommand", data, true);
-                                }
-                            }
-                            JSObject data = new JSObject(); data.put("state", "idle");
-                            notifyListeners("listeningState", data, true);
-                        }
-                        @Override public void onPartialResults(Bundle partialResults) {
-                            ArrayList<String> matches = partialResults != null ? partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
-                            if (matches != null && !matches.isEmpty()) {
-                                JSObject data = new JSObject();
-                                data.put("partial", matches.get(0));
-                                notifyListeners("listeningState", data, true);
-                            }
-                        }
-                        @Override public void onEvent(int eventType, Bundle params) {}
-                    });
+                // 3. Re-create SpeechRecognizer instance to prevent ERROR_CLIENT / ERROR_BUSY on Android
+                if (speechRecognizer != null) {
+                    try {
+                        speechRecognizer.cancel();
+                        speechRecognizer.destroy();
+                    } catch (Exception ignored) {}
+                    speechRecognizer = null;
                 }
+
+                if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+                    Log.w(TAG, "SpeechRecognizer is not available on this device");
+                    if (call != null) call.reject("El reconocimiento de voz nativo no está disponible en este dispositivo.");
+                    return;
+                }
+
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+                speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                    @Override public void onReadyForSpeech(Bundle params) {
+                        JSObject data = new JSObject(); data.put("state", "ready");
+                        notifyListeners("listeningState", data, true);
+                    }
+                    @Override public void onBeginningOfSpeech() {
+                        JSObject data = new JSObject(); data.put("state", "speaking");
+                        notifyListeners("listeningState", data, true);
+                    }
+                    @Override public void onRmsChanged(float rmsdB) {}
+                    @Override public void onBufferReceived(byte[] buffer) {}
+                    @Override public void onEndOfSpeech() {
+                        JSObject data = new JSObject(); data.put("state", "end");
+                        notifyListeners("listeningState", data, true);
+                    }
+                    @Override public void onError(int error) {
+                        Log.w(TAG, "Native SpeechRecognizer error: " + error);
+                        JSObject data = new JSObject(); data.put("state", "error"); data.put("error", error);
+                        notifyListeners("listeningState", data, true);
+                        if (speechRecognizer != null) {
+                            try { speechRecognizer.cancel(); speechRecognizer.destroy(); } catch (Exception ignored) {}
+                            speechRecognizer = null;
+                        }
+                    }
+                    @Override public void onResults(Bundle results) {
+                        ArrayList<String> matches = results != null ? results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
+                        if (matches != null && !matches.isEmpty()) {
+                            String recognized = matches.get(0).trim();
+                            if (!recognized.isEmpty()) {
+                                Log.i(TAG, "Native SpeechRecognizer result: " + recognized);
+                                JSObject data = new JSObject();
+                                data.put("command", recognized);
+                                notifyListeners("wakeCommand", data, true);
+                            }
+                        }
+                        JSObject data = new JSObject(); data.put("state", "idle");
+                        notifyListeners("listeningState", data, true);
+                        if (speechRecognizer != null) {
+                            try { speechRecognizer.cancel(); speechRecognizer.destroy(); } catch (Exception ignored) {}
+                            speechRecognizer = null;
+                        }
+                    }
+                    @Override public void onPartialResults(Bundle partialResults) {
+                        ArrayList<String> matches = partialResults != null ? partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) : null;
+                        if (matches != null && !matches.isEmpty()) {
+                            JSObject data = new JSObject();
+                            data.put("partial", matches.get(0));
+                            notifyListeners("listeningState", data, true);
+                        }
+                    }
+                    @Override public void onEvent(int eventType, Bundle params) {}
+                });
 
                 Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
@@ -421,7 +491,8 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
     public void stopListening(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             if (speechRecognizer != null) {
-                try { speechRecognizer.stopListening(); } catch (Exception ignored) {}
+                try { speechRecognizer.stopListening(); speechRecognizer.cancel(); speechRecognizer.destroy(); } catch (Exception ignored) {}
+                speechRecognizer = null;
             }
             if (call != null) call.resolve();
         });

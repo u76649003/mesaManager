@@ -310,7 +310,9 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
   }
   const reservationReference = text.match(/\b(res-\d{4}-\d{6})\b/i)?.[1]?.toUpperCase();
 
-  if (/(qu[eé]\s+)?reservas?.*(hoy|esta noche)|reservas?\s+(de\s+)?hoy|qui[eé]n\s+viene\s+hoy/i.test(text)) {
+  const isCreateIntent = /(?:crea|crear|hacer|nueva|quiero|ponme|dame)\s+(?:una\s+)?reserva/i.test(text);
+
+  if (!isCreateIntent && /(?:qu[eé]|cu[aá]les|tengo|hay|qui[eé]n|ver|dime)\s+.*reservas?.*(?:hoy|esta noche)|^\s*reservas?\s+(?:de\s+)?hoy\s*$/i.test(text)) {
     return { action: 'list_today_reservations', ...(tableLabel ? { tableLabel } : {}) };
   }
   if (date && /reservas?/.test(text) && /(qué|que|cu[aá]les|tengo|hay|dime|ver)/.test(text)) return { action: 'list_reservations_date', date };

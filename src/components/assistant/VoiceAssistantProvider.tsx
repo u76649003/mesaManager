@@ -423,11 +423,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     }
 
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    // Prefer server route /api/assistant/tts (which concatenates multi-sentence chunks)
-    // or fallback directly to Google natural Spanish voice
-    const audioUrl = (origin && !origin.startsWith('capacitor://') && !origin.startsWith('file://'))
-      ? `${origin}/api/assistant/tts?text=${encodeURIComponent(clean)}`
-      : `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(clean.slice(0, 160))}&tl=es&client=tw-ob`;
+    const serverUrl = (origin && !origin.startsWith('capacitor://') && !origin.startsWith('file://'))
+      ? origin
+      : 'https://mesa-manager.vercel.app';
+    const audioUrl = `${serverUrl}/api/assistant/tts?text=${encodeURIComponent(clean)}`;
 
     if (Capacitor.isNativePlatform()) {
       void WakeWord.speak({ text: clean, audioUrl, expectReply });
@@ -466,10 +465,16 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           window.speechSynthesis.resume();
           const u = new SpeechSynthesisUtterance(clean);
           u.lang = 'es-ES';
-          u.rate = 0.95;
-          u.pitch = 1.0;
+          u.rate = 0.96;
+          u.pitch = 1.02;
           const voices = window.speechSynthesis.getVoices();
-          const naturalVoice = voices.find(v => v.lang.startsWith('es') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Alvaro') || v.name.includes('Elvira')));
+          const naturalVoice =
+            voices.find(v => v.lang.startsWith('es') && (
+              v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Online') ||
+              v.name.includes('Alvaro') || v.name.includes('Elvira') || v.name.includes('Helena') ||
+              v.name.includes('Monica') || v.name.includes('Jorge') || v.name.includes('Neural')
+            )) ||
+            voices.find(v => v.lang.startsWith('es'));
           if (naturalVoice) u.voice = naturalVoice;
           u.onend = finish;
           u.onerror = finish;
@@ -1296,31 +1301,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   }, [fetchReservations, reply]);
   useEffect(() => { confirmRef.current = confirm; }, [confirm]);
 
-  // ── startListening ────────────────────────────────────────────────────────
-  /** Start the recognizer (native SpeechRecognizer on mobile, Web Speech API on desktop).
-   * Guards against starting while TTS is speaking to prevent self-listening.
-   */
-  const startListening = useCallback(() => {
-    // Do NOT start if TTS is currently speaking (prevents self-listening loop)
-    if (isSpeakingRef.current) {
-      console.info('[VA] Skipping startListening: TTS still speaking');
-      return;
-    }
-    setOpen(true);
-    setTranscript('');
-
-    if (Capacitor.isNativePlatform()) {
-      setListening(true);
-      void WakeWord.listen().catch((err) => {
-        console.warn('[VA] Native listen error:', err);
-        setListening(false);
-      });
-      return;
-    }
-
-    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const startWebListening = useCallback(() => {
+    const Ctor = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : undefined;
     if (!Ctor) { setOpen(true); reply('El reconocimiento de voz no está disponible. Escribe la orden.'); return; }
-    // Reuse existing recognition instance if already running
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
     }
@@ -1343,9 +1326,37 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       }
     };
     recognitionRef.current = recognition;
-    recognition.start();
-    setListening(true); setOpen(true);
+    try {
+      recognition.start();
+      setListening(true); setOpen(true);
+    } catch {
+      setListening(false);
+    }
   }, [reply]);
+
+  // ── startListening ────────────────────────────────────────────────────────
+  /** Start the recognizer (native SpeechRecognizer on mobile, Web Speech API on desktop).
+   * Guards against starting while TTS is speaking to prevent self-listening.
+   */
+  const startListening = useCallback(() => {
+    // Do NOT start if TTS is currently speaking (prevents self-listening loop)
+    if (isSpeakingRef.current) {
+      console.info('[VA] Skipping startListening: TTS still speaking');
+      return;
+    }
+    setOpen(true);
+    setTranscript('');
+
+    if (Capacitor.isNativePlatform()) {
+      setListening(true);
+      void WakeWord.listen().catch((err) => {
+        console.warn('[VA] Native listen error, falling back to Web Speech API:', err);
+        startWebListening();
+      });
+      return;
+    }
+    startWebListening();
+  }, [startWebListening]);
   useEffect(() => { startListenRef.current = startListening; }, [startListening]);
 
   const stopListening = useCallback(() => {
