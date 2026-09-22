@@ -54,6 +54,18 @@ export default function DashboardPage() {
   const [activeView, setActiveView] = useState<'map' | 'list'>('map');
   const [showMobileTimeline, setShowMobileTimeline] = useState(false);
 
+  // Switch view on voice assistant command (e.g. open reservations list)
+  useEffect(() => {
+    const handleSwitchView = (e: Event) => {
+      const customEvent = e as CustomEvent<{ view?: 'map' | 'list' }>;
+      if (customEvent.detail?.view) {
+        setActiveView(customEvent.detail.view);
+      }
+    };
+    window.addEventListener('mm:switch-view', handleSwitchView);
+    return () => window.removeEventListener('mm:switch-view', handleSwitchView);
+  }, []);
+
   // --- Overdue Reservation Alert state ---
   // Map of reservationId -> how many minutes of extra grace have been granted
   const [snoozedMinutes, setSnoozedMinutes] = useState<Record<string, number>>({});

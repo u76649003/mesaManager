@@ -336,10 +336,15 @@ export function parseAssistantIntent(raw: string, now = new Date()): AssistantIn
 
   const isCreateIntent = /(?:crea|crear|hacer|nueva|quiero|ponme|dame)\s+(?:una\s+)?reserva/i.test(text);
 
-  if (!isCreateIntent && /(?:qu[eé]|cu[aá]les|tengo|hay|qui[eé]n|ver|dime)\s+.*reservas?.*(?:hoy|esta noche)|^\s*reservas?\s+(?:de\s+)?hoy\s*$/i.test(text)) {
+  if (!isCreateIntent && /(?:abre|abrir|ver|muestra|mu[eé]strame|ense[ñn]a|ense[ñn]ame)\s+(?:el\s+)?libro\s+de\s+reservas/i.test(text)) {
+    if (date) return { action: 'list_reservations_date', date };
+    return { action: 'list_today_reservations' };
+  }
+
+  if (!isCreateIntent && /(?:qu[eé]|cu[aá]les|tengo|hay|qui[eé]n|ver|dime|mira|mirar|mostrar|mu[eé]strame|ense[ñn]a|ense[ñn]ame|abre|abrir|libro|consulta|consultar|necesito)\s+.*reservas?.*(?:hoy|esta noche)|^\s*reservas?\s+(?:de\s+)?hoy\s*$/i.test(text)) {
     return { action: 'list_today_reservations', ...(tableLabel ? { tableLabel } : {}) };
   }
-  if (date && /reservas?/.test(text) && /(qué|que|cu[aá]les|tengo|hay|dime|ver)/.test(text)) return { action: 'list_reservations_date', date };
+  if (!isCreateIntent && date && /reservas?/.test(text) && /(qu[eé]|cu[aá]les|tengo|hay|qui[eé]n|ver|dime|mira|mirar|mostrar|mu[eé]strame|ense[ñn]a|ense[ñn]ame|abre|abrir|libro|consulta|consultar|necesito)/i.test(text)) return { action: 'list_reservations_date', date };
   if (/(qu[eé]\s+)?mesas?.*(libres?|disponibles?)|(libres?|disponibles?).*mesas?/.test(text)) return { action: 'list_free_tables' };
 
   if (reservationReference && /(cancela|cancelar|anula|anular)/.test(text)) return assistantIntentSchema.parse({ action: 'cancel_reservation', reference: reservationReference });

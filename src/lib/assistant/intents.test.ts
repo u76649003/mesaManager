@@ -67,3 +67,15 @@ test('parses colloquial terrace and table time phrases correctly', () => {
   assert.equal(result.tableLabel, '1');
   assert.equal(result.time, '13:00');
 });
+
+test('parses intent to see reservations on a specific day or open reservation book', () => {
+  // 2026-09-22 is Tuesday -> next Thursday is 2026-09-24
+  const res1 = parseAssistantIntent('pues necesito ver la reserva del jueves', new Date(2026, 8, 22));
+  assert.deepEqual(res1, { action: 'list_reservations_date', date: '2026-09-24' });
+
+  const res2 = parseAssistantIntent('abre el libro de reservas del jueves', new Date(2026, 8, 22));
+  assert.deepEqual(res2, { action: 'list_reservations_date', date: '2026-09-24' });
+
+  const res3 = parseAssistantIntent('abre el libro de reservas');
+  assert.deepEqual(res3, { action: 'list_today_reservations' });
+});

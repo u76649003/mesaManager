@@ -147,6 +147,19 @@ function findReservation(
   return null;
 }
 
+function formatSpokenDate(dateStr: string): string {
+  try {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr;
+    const date = new Date(y, m - 1, d);
+    const dayName = date.toLocaleDateString('es-ES', { weekday: 'long' });
+    const monthName = date.toLocaleDateString('es-ES', { month: 'long' });
+    return `el ${dayName} ${d} de ${monthName}`;
+  } catch {
+    return `el día ${dateStr}`;
+  }
+}
+
 /** True when the assistant message is a question or we are mid-conversation. */
 function needsReply(message: string, inConversation: boolean) {
   return inConversation || message.trim().endsWith('?');
@@ -1212,6 +1225,9 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       const best = tables.filter((t) => t.is_active && capacity(t) >= intent.partySize && !overlaps(t, reservations, selectedDate, selectedTime)).sort((a, b) => capacity(a) - capacity(b))[0];
       message = best ? `La mejor opción para ${intent.partySize} personas es la mesa ${best.label}. ¿Quieres que haga la reserva?` : `No veo ninguna mesa libre para ${intent.partySize} personas ahora mismo.`;
     } else if (intent.action === 'list_today_reservations') {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('mm:switch-view', { detail: { view: 'list' } }));
+      }
       const active = todayReservations.filter((r) => !['cancelled', 'no_show'].includes(r.status));
       const tbl = intent.tableLabel;
       if (tbl) {
@@ -1220,17 +1236,65 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           ? `Para la mesa ${tbl} hoy tienes ${filtered.length} reserva${filtered.length > 1 ? 's' : ''}: ${filtered.map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}`).join('. ')}.`
           : `Para la mesa ${tbl} no hay reservas programadas hoy.`;
       } else {
-        message = active.length ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'}` : 'Hoy no tienes reservas activas.';
+        message = active.length
+          ? `Hoy tienes ${active.length} reservas. ${active.slice(0, 8).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}${active.length > 8 ? `. Y ${active.length - 8} más.` : '.'} Te he abierto el libro de reservas.`
+          : 'Hoy no tienes reservas activas. Te he abierto el libro de reservas.';
       }
     } else if (intent.action === 'list_reservations_date') {
       setWorking(true);
+      const spokenDate = formatSpokenDate(intent.date);
+
+      // 1. Update global store date so all UI components update
+      useReservationStore.getState().setSelectedDate(intent.date);
+
+      // 2. Switch UI view to the reservations list (libro de reservas)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('mm:switch-view', { detail: { view: 'list' } }));
+      }
+
       try {
-        const { data, error } = await createClient().from('reservations').select('guest_name, party_size, time, status, table:tables(label)').eq('date', intent.date).not('status', 'in', '(cancelled,no_show)').order('time');
-        if (error) throw error;
-        const rows = (data ?? []) as unknown as Array<{ guest_name: string; party_size: number; time: string; table?: { label: string } | null }>;
-        message = rows.length ? `El ${intent.date} tienes ${rows.length} reservas. ${rows.slice(0, 10).map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? `, mesa ${r.table.label}` : ''}`).join('. ')}.` : `El ${intent.date} no tienes reservas activas.`;
-      } catch { message = 'No he podido consultar las reservas de ese día.'; }
-      finally { setWorking(false); }
+        const supabase = createClient();
+        let rows: Array<{ guest_name: string; party_size: number; time: string; table?: { label: string } | null }> = [];
+
+        // Primary query with explicit constraint to avoid PostgREST PGRST200
+        const { data, error } = await supabase
+          .from('reservations')
+          .select('guest_name, party_size, time, status, table:tables!reservations_table_id_fkey(label)')
+          .eq('date', intent.date)
+          .not('status', 'in', '(cancelled,no_show)')
+          .order('time');
+
+        if (!error && data) {
+          rows = data as unknown as typeof rows;
+        } else {
+          // Fallback query without table relation in case foreign key differs
+          const fallback = await supabase
+            .from('reservations')
+            .select('guest_name, party_size, time, status')
+            .eq('date', intent.date)
+            .not('status', 'in', '(cancelled,no_show)')
+            .order('time');
+          if (fallback.data) {
+            rows = fallback.data as unknown as typeof rows;
+          }
+        }
+
+        if (rows.length > 0) {
+          const summary = rows
+            .slice(0, 8)
+            .map((r) => `${r.guest_name}, ${r.party_size} personas a las ${r.time.slice(0, 5)}${r.table?.label ? ` en mesa ${r.table.label}` : ''}`)
+            .join('. ');
+          const extra = rows.length > 8 ? ` Y ${rows.length - 8} más en el libro.` : '';
+          message = `Para ${spokenDate} tienes ${rows.length} reserva${rows.length > 1 ? 's' : ''}: ${summary}.${extra} Te he abierto el libro de reservas de ese día.`;
+        } else {
+          message = `Para ${spokenDate} no tienes ninguna reserva activa. Te he abierto el libro de reservas de ese día.`;
+        }
+      } catch (e) {
+        console.error('[VA] Error consultando reservas por fecha:', e);
+        message = `Te he abierto el libro de reservas para ${spokenDate}.`;
+      } finally {
+        setWorking(false);
+      }
     } else if (intent.action === 'list_free_tables') {
       // Start search_tables conversation: ask for room (if multiple) then partySize
       const mentionedRoom = rooms.find((r) => command.toLocaleLowerCase('es-ES').includes(r.name.toLocaleLowerCase('es-ES')));
