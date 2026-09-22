@@ -63,7 +63,8 @@ type Conversation =
   | { kind: 'await_reference'; nextAction: 'cancel_reservation' | 'seat_reservation' }
   | { kind: 'await_modify_ref' }
   | { kind: 'modify_reservation'; reference: string }
-  | { kind: 'search_reservation_query' };
+  | { kind: 'search_reservation_query' }
+  | { kind: 'overflow_confirm'; draft: ReservationDraft; tableId: string; tableLabel: string; tableCap: number };
 type WakeWordPluginApi = {
   start(options: { name: string }): Promise<{ active: boolean }>;
   stop(): Promise<{ active: boolean }>;
@@ -901,7 +902,74 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       return;
     }
 
+    // ── overflow_confirm: mesa con capacidad insuficiente → el usuario decide ──
+    if (conversationRef.current?.kind === 'overflow_confirm') {
+      const { draft, tableId, tableLabel, tableCap } = conversationRef.current;
+      const norm = command.toLocaleLowerCase('es-ES').trim();
+
+      // Cancelar
+      if (/\b(cancelar?|olvida|no\s+quiero|deja|stop|para)\b/i.test(norm)) {
+        conversationRef.current = null; setDraftProgress(null);
+        reply('De acuerdo, cancelado. ¿En qué más te ayudo?');
+        return;
+      }
+
+      // Buscar mesa más grande
+      const wantsBigger = /\b(m[aá]s\s+grande|otra|busca|distinta|diferente|mejor|otra\s+mesa|buscar)\b/i.test(norm)
+        || /\b(no|prefiero\s+buscar|no\s+quiero\s+esa)\b/i.test(norm);
+      if (wantsBigger) {
+        conversationRef.current = null;
+        const optimal = evaluateOptimalRoomAndTable(draft.partySize!, rooms, tables, reservations, draft.date!, draft.time!);
+        if (optimal) {
+          draft.tableLabel = optimal.bestTable.label;
+          conversationRef.current = { kind: 'reservation', draft };
+          // Volver a procesar para que genere la propuesta con la nueva mesa
+          void answerRef.current(command);
+        } else {
+          reply(`No encuentro ninguna mesa disponible para ${draft.partySize} personas en ese horario. ¿Quieres que pruebe con otro día u hora?`);
+        }
+        return;
+      }
+
+      // Confirmar reserva igualmente (party_size original, mesa con capacidad menor)
+      const wantsAnyway = /\b(s[íi]|igualmente|de\s+todas\s+formas?|ponla|hazla|confirma|adelante|vale|ok|dale|venga)\b/i.test(norm);
+      if (wantsAnyway) {
+        conversationRef.current = null;
+        setWorking(true);
+        try {
+          const table = tables.find((t) => t.id === tableId)!;
+          const noteStr = draft.notes ? ` (Nota: ${draft.notes})` : '';
+          const contactStr = draft.phone ? ` · Tel: ${draft.phone}` : draft.email ? ` · Email: ${draft.email}` : '';
+          const summary = `Reservar la mesa ${tableLabel} (cap. ${tableCap}p) para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}${noteStr}${contactStr}.`;
+          const next: PendingProposal = {
+            summary,
+            operation: {
+              action: 'create_reservation' as const,
+              guest_name: draft.guestName,
+              party_size: draft.partySize,
+              date: draft.date,
+              time: draft.time,
+              duration_minutes: 90,
+              table_id: table.id,
+              notes: draft.notes,
+              ...(draft.phone ? { guest_phone: draft.phone } : {}),
+              ...(draft.email ? { guest_email: draft.email } : {}),
+            },
+          };
+          setDraftProgress(null);
+          setProposal(next); reply(next.summary + ' ' + confirmQ(styleRef.current));
+        } catch { reply('No he podido preparar la reserva ahora mismo.'); }
+        finally { setWorking(false); }
+        return;
+      }
+
+      // Respuesta ambigua: volver a preguntar
+      reply(`¿Reservo la mesa ${tableLabel} para ${draft.partySize} personas igualmente, o prefieres una mesa más grande?`);
+      return;
+    }
+
     if (conversationRef.current?.kind === 'reservation') {
+
       const draft = conversationRef.current.draft;
 
       // ── Structured-First: determine which field we're waiting for ────────────
@@ -1045,6 +1113,26 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
 
         const table = tables.find((t) => t.label.toLocaleLowerCase('es-ES') === draft.tableLabel!.toLocaleLowerCase('es-ES'));
         if (!table) { const bad = draft.tableLabel; draft.tableLabel = undefined; reply(`No encuentro la mesa ${bad}. ¿Qué mesa quieres reservar?`); return; }
+
+        // ── Comprobación de capacidad ANTES del RPC ─────────────────────────────
+        const tableCap = capacity(table);
+        if (tableCap < draft.partySize!) {
+          conversationRef.current = {
+            kind: 'overflow_confirm',
+            draft,
+            tableId: table.id,
+            tableLabel: table.label,
+            tableCap,
+          };
+          reply(
+            `La mesa ${table.label} tiene capacidad para ${tableCap} persona${tableCap !== 1 ? 's' : ''}, ` +
+            `pero me pides ${draft.partySize!}. ` +
+            `¿Quieres que la reserve igualmente para ${draft.partySize!} siendo de ${tableCap}, ` +
+            `o prefieres buscar una mesa más grande?`
+          );
+          return;
+        }
+
         setWorking(true);
         try {
           const { data, error } = await createClient().rpc('assistant_table_candidates', { p_date: draft.date, p_time: draft.time, p_party_size: draft.partySize, p_duration_minutes: 90, p_room_id: null, p_exclude_reservation_id: null });
@@ -1052,10 +1140,14 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           const candidates = (data ?? []) as Array<{ allocation_type: string; allocation_id: string; label: string }>;
           const requested = candidates.find((c) => c.allocation_type === 'table' && c.allocation_id === table.id);
           if (!requested) {
+            // Mesa con capacidad suficiente pero ya ocupada/reservada en ese horario
             const alt = candidates[0]; conversationRef.current = null;
-            reply(alt ? `La mesa ${table.label} no está disponible o no tiene capacidad. Sí está disponible ${alt.label}. ¿Quieres que reserve esa en su lugar?` : `La mesa ${table.label} no está disponible y no encuentro alternativa válida.`);
+            reply(alt
+              ? `La mesa ${table.label} no está disponible para ese horario. Sí está disponible la mesa ${alt.label}. ¿Quieres que reserve esa en su lugar?`
+              : `La mesa ${table.label} no está disponible para ese horario y no encuentro alternativa válida.`);
             return;
           }
+
 
           const noteStr = draft.notes ? ` (Nota: ${draft.notes})` : '';
           const contactStr = draft.phone ? ` · Tel: ${draft.phone}` : draft.email ? ` · Email: ${draft.email}` : '';
