@@ -40,6 +40,10 @@ type ReservationDraft = {
   paymentMethod?: 'none' | 'bizum' | 'online';
   askedPayment?: boolean;
   paymentAmount?: number;
+  // Datos de contacto (opcionales)
+  phone?: string;
+  email?: string;
+  askedContact?: boolean; // true si ya se preguntó por contacto (evita preguntar dos veces)
 };
 // Reservation draft field progress — used to render UI chips
 type DraftFieldStatus = 'pending' | 'captured' | 'skipped';
@@ -172,6 +176,11 @@ const QUESTION_VARIANTS = {
   table: [
     '¿Qué mesa o salón prefieren?',
     '¿En qué zona quieren sentarse?',
+  ],
+  contact: [
+    '¿Tienes el teléfono o email del cliente? Di "sin contacto" para saltar.',
+    '¿Me das un número o correo para el recordatorio? Si no tienes, di "saltar".',
+    '¿Teléfono o email del cliente? (puedes saltarlo diciendo "no")',
   ],
 };
 
@@ -582,12 +591,31 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     styleRef.current = evolveStyle(styleRef.current, command);
     if (styleKeyRef.current) saveStyle(styleKeyRef.current, styleRef.current);
 
-    // ── Reset conversation state when starting with "Ey" wake phrase ───────────
-    const isExplicitEyWake = /^\b(ey|hola)\b/i.test(command) || (assistantName && command.toLocaleLowerCase('es-ES').includes(`ey ${assistantName.toLocaleLowerCase('es-ES')}`));
+    // ── Reset conversation state when starting with "Ey/Oye/Hey [nombre]" ────────────
+    const nameLower = assistantName.toLocaleLowerCase('es-ES');
+    const cmdLower = command.toLocaleLowerCase('es-ES');
+    const isExplicitEyWake =
+      /^(ey|oye|hey|hola)\b/i.test(command) ||
+      (assistantName && (
+        cmdLower.includes(`ey ${nameLower}`) ||
+        cmdLower.includes(`oye ${nameLower}`) ||
+        cmdLower.includes(`hey ${nameLower}`) ||
+        cmdLower.startsWith(nameLower)
+      ));
     if (isExplicitEyWake) {
+      // Limpiar TODO el estado de la conversación anterior
       conversationRef.current = null;
+      setDraftProgress(null);
+      setProposal(null);
+      setResponse('');
+      // Reconstruir la sesión IA con el prompt correcto (no con '')
+      const freshSnapshot = buildStoreSnapshot();
+      const freshCtx = buildRestaurantContext(freshSnapshot);
+      const freshPrompt = buildSystemPrompt(assistantName, freshCtx);
       if (aiSessionRef.current) {
-        clearSession(aiSessionRef.current, '');
+        clearSession(aiSessionRef.current, freshPrompt);
+      } else {
+        aiSessionRef.current = createSession(freshPrompt);
       }
     }
 
@@ -930,9 +958,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       if (!draft.time) { const t = extractTime(command); if (t) draft.time = t; }
       if (!draft.guestName) { const g = extractGuestName(command, pendingField === 'guestName'); if (g) draft.guestName = g; }
 
-      // Smart Learning Fast-Path: Auto-fill learned preferences from guest history or user style profile
+      // Smart Learning Fast-Path: Auto-fill learned preferences ONLY if user explicitly requests habitual/fast reservation
+      const isHabitualRequested = /(como\s+siempre|la\s+de\s+siempre|mi\s+habitual|r[aá]pid|f[aá]cil)/i.test(command);
       let learnedNotice = '';
-      if (draft.guestName) {
+      if (draft.guestName && isHabitualRequested) {
         const normName = draft.guestName.toLocaleLowerCase('es-ES').trim();
         const pastRes = [...reservations, ...todayReservations].find(
           (r) => r.guest_name?.toLocaleLowerCase('es-ES').trim() === normName || r.guest_name?.toLocaleLowerCase('es-ES').includes(normName)
@@ -951,16 +980,30 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         }
       }
 
-      // Fallback to user restaurant style profile defaults if fast reservation requested
-      if (!draft.partySize && styleRef.current.preferredPartySize && /(r[aá]pid|habitual|f[aá]cil)/i.test(command)) {
+      // Fallback to user restaurant style profile defaults only if fast reservation explicitly requested
+      if (!draft.partySize && styleRef.current.preferredPartySize && isHabitualRequested) {
         draft.partySize = styleRef.current.preferredPartySize;
       }
-      if (!draft.time && styleRef.current.preferredTime && /(r[aá]pid|habitual|f[aá]cil)/i.test(command)) {
+      if (!draft.time && styleRef.current.preferredTime && isHabitualRequested) {
         draft.time = styleRef.current.preferredTime;
       }
 
       // Update draft progress for UI chips
       setDraftProgress(getDraftProgress(draft));
+
+      // ── Extractor de teléfono/email del texto libre ─────────────────────────
+      if (!draft.phone) {
+        const phoneMatch = command.match(/\b([6-9]\d{8})\b/);
+        if (phoneMatch) draft.phone = phoneMatch[1];
+      }
+      if (!draft.email) {
+        const emailMatch = command.match(/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/i);
+        if (emailMatch) draft.email = emailMatch[0];
+      }
+      // Si el usuario dice que no quiere dar contacto, marcar como preguntado
+      if (!draft.askedContact && /\b(sin\s+contacto|no\s+tengo|saltar|no|omitir)\b/i.test(command)) {
+        draft.askedContact = true;
+      }
 
       // Step-by-step missing field prompts (never auto-assign date!)
       if (!draft.guestName) {
@@ -979,6 +1022,12 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
       }
       if (!draft.time) {
         reply(`El ${draft.date} para ${draft.guestName}. ${pickVariant(QUESTION_VARIANTS.time, draft.date)}`);
+        return;
+      }
+      // ── Preguntar contacto una sola vez, tras tener los 4 datos ─────────────
+      if (!draft.askedContact && !draft.phone && !draft.email) {
+        draft.askedContact = true;
+        reply(pickVariant(QUESTION_VARIANTS.contact, draft.guestName));
         return;
       }
       if (!draft.tableLabel) {
@@ -1009,11 +1058,12 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
           }
 
           const noteStr = draft.notes ? ` (Nota: ${draft.notes})` : '';
+          const contactStr = draft.phone ? ` · Tel: ${draft.phone}` : draft.email ? ` · Email: ${draft.email}` : '';
           const payStr = draft.paymentMethod && draft.paymentMethod !== 'none' && draft.paymentAmount
             ? `. Se enviará solicitud de anticipo de ${draft.paymentAmount.toFixed(2)}€ por ${draft.paymentMethod === 'bizum' ? 'Bizum' : 'pasarela de pago'}`
             : '';
 
-          const summary = `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}${noteStr}${payStr}.`;
+          const summary = `Reservar la mesa ${table.label} para ${draft.guestName}, ${draft.partySize} personas, el ${draft.date} a las ${draft.time}${noteStr}${contactStr}${payStr}.`;
 
           const next: PendingProposal = {
             summary,
@@ -1027,6 +1077,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
               table_id: table.id,
               notes: draft.notes,
               amount: draft.paymentAmount,
+              ...(draft.phone ? { guest_phone: draft.phone } : {}),
+              ...(draft.email ? { guest_email: draft.email } : {}),
             },
             paymentRequest: draft.paymentMethod && draft.paymentMethod !== 'none' ? draft.paymentMethod : undefined,
           };
@@ -1249,6 +1301,12 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         setAwaitingReply(false);
         if (exp) {
           setListening(true);
+          // Start native microphone listen to capture user response
+          setTimeout(() => {
+            void WakeWord.listen().catch((err) => {
+              console.warn('[VA] Native listen after TTS done failed:', err);
+            });
+          }, 250);
         }
       }
     }).then((h) => { if (cancelled) void h.remove(); else ttsListener = h; });
@@ -1310,11 +1368,10 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     const recognition = new Ctor();
     recognition.lang = 'es-ES'; recognition.interimResults = false; recognition.continuous = false;
     recognition.onresult = (e) => {
-      const text = e.results[0][0].transcript;
-      if (isSpeakingRef.current) {
-        console.info('[VA] Ignoring recognition result: TTS speaking');
-        return;
-      }
+      const text = e.results[0]?.[0]?.transcript;
+      if (!text) return;
+      // If TTS finished recently, force speaking flag off so valid transcripts are not lost
+      isSpeakingRef.current = false;
       setTranscript(text); setOpen(true); setAwaitingReply(false);
       void answerRef.current(text);
     };

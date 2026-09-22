@@ -81,6 +81,13 @@ export function extractDate(text: string, now: Date = new Date()): string | unde
   if (wanted >= 0) {
     let delta = (wanted - result.getDay() + 7) % 7;
     if (delta === 0 || /\bpr[oó]ximo\b/.test(norm)) delta = delta === 0 ? 7 : delta;
+    // Si el día calculado ya pasó esta semana (delta > 0 pero cae en el pasado
+    // por ser hoy ese mismo día a otra hora, ya cubierto arriba), no hay caso extra.
+    // El caso real: delta > 0 pero la fecha resultante es "ayer" o antes → ir a siguiente semana.
+    const candidate = new Date(result);
+    candidate.setDate(result.getDate() + delta);
+    const todayStart = new Date(result); todayStart.setHours(0, 0, 0, 0);
+    if (candidate < todayStart && !/\bpasad[oa]\b|\búltim[oa]\b/.test(norm)) delta += 7;
     result.setDate(result.getDate() + delta); return localIso(result);
   }
   return undefined;
@@ -95,7 +102,8 @@ const hourWordMap: Record<string, number> = {
 };
 
 export function extractTime(raw: string): string | undefined {
-  const norm = raw.toLocaleLowerCase('es-ES').trim();
+  const cleaned = raw.replace(/\buna?\s+(?:reserva|mesa|cita|persona|personas|comensal|comensales|pax|noche|tarde|pregunta|duda|vez)\b/gi, ' ');
+  const norm = cleaned.toLocaleLowerCase('es-ES').trim();
   if (/\bmediod[ií]a\b/.test(norm)) return '12:00';
   if (/\bmedianoche\b/.test(norm)) return '00:00';
   const digitalMatch = norm.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/);
@@ -277,13 +285,29 @@ export function extractConversationReply(
   }
 }
 
+const TABLE_LABEL_BLACKLIST = new Set([
+  'reserva', 'reservas', 'mesa', 'mesas', 'cita', 'persona', 'personas',
+  'comensal', 'comensales', 'pax', 'hoy', 'mañana', 'pasado', 'noche', 'tarde',
+  'una', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez',
+  'sala', 'terraza', 'comedor', 'interior', 'bar', 'vip',
+]);
+
 function extractTableLabel(text: string): string | undefined {
   const directMesa = text.match(/\bmesa\s+([a-záéíóúüñ0-9-]+)\b/i);
-  if (directMesa) return normalizeTableLabel(directMesa[1]);
+  if (directMesa) {
+    const cand = normalizeTableLabel(directMesa[1]);
+    if (!TABLE_LABEL_BLACKLIST.has(cand.toLowerCase())) return cand;
+  }
   const roomTable = text.match(/\b(?:terraza|interior|sala|comedor|bar|vip)\s+(?:la\s+)?([a-záéíóúüñ0-9-]+)\b/i);
-  if (roomTable) return normalizeTableLabel(roomTable[1]);
+  if (roomTable) {
+    const cand = normalizeTableLabel(roomTable[1]);
+    if (!TABLE_LABEL_BLACKLIST.has(cand.toLowerCase())) return cand;
+  }
   const laNum = text.match(/\b(?:la|n[úu]mero|num)\s+([a-záéíóúüñ0-9]+)\b/i);
-  if (laNum) return normalizeTableLabel(laNum[1]);
+  if (laNum) {
+    const cand = normalizeTableLabel(laNum[1]);
+    if (!TABLE_LABEL_BLACKLIST.has(cand.toLowerCase())) return cand;
+  }
   return undefined;
 }
 

@@ -104,17 +104,19 @@ export const AI_TOOLS: AITool[] = [
     type: 'function',
     function: {
       name: 'crear_reserva',
-      description: 'Crea una nueva reserva. Requiere confirmación del usuario antes de ejecutarse.',
+      description: 'Crea una nueva reserva. SOLO invocar cuando el usuario haya indicado explícitamente los 4 datos (nombre, personas, fecha y hora). Requiere confirmación.',
       parameters: {
         type: 'object',
         properties: {
           guest_name: { type: 'string', description: 'Nombre del cliente' },
-          date: { type: 'string', description: 'Fecha ISO YYYY-MM-DD' },
-          time: { type: 'string', description: 'Hora en formato HH:MM' },
+          date: { type: 'string', description: 'Fecha ISO YYYY-MM-DD. SOLO si el usuario la especificó explícitamente en su voz (ej. hoy, mañana, viernes). NO autocompletar con la fecha actual ni seleccionada.' },
+          time: { type: 'string', description: 'Hora en formato HH:MM. SOLO si el usuario la especificó explícitamente en su voz (ej. a las 14:00, 21:00, mediodía). NO autocompletar con la hora actual.' },
           party_size: { type: 'number', description: 'Número de personas' },
           table_label: { type: 'string', description: 'Número/etiqueta de mesa (opcional)' },
           notes: { type: 'string', description: 'Notas o peticiones especiales (opcional)' },
           duration_minutes: { type: 'number', description: 'Duración estimada en minutos (por defecto 90)' },
+          guest_phone: { type: 'string', description: 'Teléfono del cliente, formato español (ej. 612345678). Opcional, solo si el usuario lo mencionó.' },
+          guest_email: { type: 'string', description: 'Email del cliente. Opcional, solo si el usuario lo mencionó.' },
         },
         required: ['guest_name', 'date', 'time', 'party_size'],
       },

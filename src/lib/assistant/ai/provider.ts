@@ -270,9 +270,10 @@ async function executeTool(
     }
 
     case 'crear_reserva': {
-      const { guest_name, date, time, party_size, table_label, notes, duration_minutes } = args as {
+      const { guest_name, date, time, party_size, table_label, notes, duration_minutes, guest_phone, guest_email } = args as {
         guest_name: string; date: string; time: string; party_size: number;
         table_label?: string; notes?: string; duration_minutes?: number;
+        guest_phone?: string; guest_email?: string;
       };
       if (!guest_name || !date || !time || !party_size) {
         return { kind: 'data', data: { error: 'Faltan campos obligatorios para crear la reserva' } };
@@ -280,6 +281,7 @@ async function executeTool(
       const normDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : (extractDate(date) ?? date);
       const normTime = /^\d{2}:\d{2}$/.test(time) ? time : (extractTime(time) ?? time);
       const noteStr = notes ? ` (Nota: ${notes})` : '';
+      const contactStr = guest_phone ? ` · Tel: ${guest_phone}` : guest_email ? ` · Email: ${guest_email}` : '';
 
       // Find table if label provided, or automatically recommend best available
       let resolvedTable = table_label
@@ -294,7 +296,7 @@ async function executeTool(
       }
 
       const mesaStr = resolvedTable ? `, mesa ${resolvedTable.label}` : (table_label ? `, mesa ${table_label}` : '');
-      const summary = `Crear reserva para ${guest_name}, ${party_size} personas, el ${normDate} a las ${normTime}${mesaStr}${noteStr}.`;
+      const summary = `Crear reserva para ${guest_name}, ${party_size} personas, el ${normDate} a las ${normTime}${mesaStr}${noteStr}${contactStr}.`;
       const operation: Record<string, unknown> = {
         action: 'create_reservation',
         guest_name,
@@ -303,6 +305,8 @@ async function executeTool(
         time: normTime,
         duration_minutes: duration_minutes ?? 90,
         notes,
+        ...(guest_phone ? { guest_phone } : {}),
+        ...(guest_email ? { guest_email } : {}),
         ...(resolvedTable ? { table_id: resolvedTable.id } : {}),
       };
 
