@@ -95,9 +95,17 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                         Voice bestVoice = null;
                         for (Voice voice : tts.getVoices()) {
                             if (voice.getLocale() != null && "es".equalsIgnoreCase(voice.getLocale().getLanguage())) {
-                                if (voice.getQuality() == Voice.QUALITY_VERY_HIGH || voice.getName().contains("network") || voice.getName().contains("ana") || voice.getName().contains("eed")) {
+                                String vName = voice.getName() != null ? voice.getName().toLowerCase() : "";
+                                boolean isHighQuality = voice.getQuality() == Voice.QUALITY_VERY_HIGH ||
+                                    voice.getQuality() == Voice.QUALITY_HIGH ||
+                                    vName.contains("neural") || vName.contains("natural") ||
+                                    vName.contains("network") || vName.contains("google") ||
+                                    vName.contains("es-es");
+                                if (isHighQuality && !voice.isNetworkConnectionRequired()) {
                                     bestVoice = voice;
                                     break;
+                                } else if (isHighQuality) {
+                                    bestVoice = voice;
                                 } else if (bestVoice == null || voice.getQuality() > bestVoice.getQuality()) {
                                     bestVoice = voice;
                                 }
@@ -112,8 +120,8 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                     Log.w(TAG, "Failed selecting custom voice: " + vErr.getMessage());
                 }
 
-                tts.setSpeechRate(0.96f);
-                tts.setPitch(1.02f);
+                tts.setSpeechRate(0.95f);
+                tts.setPitch(1.00f);
             } catch (Exception e) {
                 Log.w(TAG, "TTS locale error", e);
             }
@@ -245,9 +253,7 @@ public class WakeWordPlugin extends Plugin implements TextToSpeech.OnInitListene
                     .build();
                 mediaPlayer.setAudioAttributes(attrs);
 
-                Map<String, String> headers = new HashMap<>();
-                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0");
-                mediaPlayer.setDataSource(getContext(), Uri.parse(audioUrl), headers);
+                mediaPlayer.setDataSource(audioUrl);
 
                 final boolean[] prepared = { false };
                 android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
