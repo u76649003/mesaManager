@@ -350,8 +350,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
   const sessionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // inactivity timer
 
   // ── State ────────────────────────────────────────────────────────────────────
-  const [assistantName, setAssistantName] = useState('Mesa');
-  const [draftName,     setDraftName]     = useState('Mesa');
+  const [assistantName, setAssistantName] = useState('Bernardo');
+  const [draftName,     setDraftName]     = useState('Bernardo');
   const [tenantId,      setTenantId]      = useState('');
   const [canConfigure,  setCanConfigure]  = useState(false);
   const [ready,         setReady]         = useState(false);
@@ -375,7 +375,7 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     if (isAuthPage) return;
     loadAssistantConfiguration().then((config) => {
       if (config) {
-        const name = (config.assistant_name && config.assistant_name.trim()) || 'Mesa';
+        const name = (config.assistant_name && config.assistant_name.trim()) || 'Bernardo';
         setAssistantName(name);
         setDraftName(name);
         setTenantId(config.tenantId);
@@ -596,7 +596,8 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
     const nameLower = assistantName.toLocaleLowerCase('es-ES');
     const cmdLower = command.toLocaleLowerCase('es-ES');
     const isExplicitEyWake =
-      /^(ey|oye|hey|hola)\b/i.test(command) ||
+      /^(ey|oye|hey|hola|buenas)\b/i.test(command) ||
+      /\b(bernardo|bernando|mesa|mara)\b/i.test(command) ||
       (assistantName && (
         cmdLower.includes(`ey ${nameLower}`) ||
         cmdLower.includes(`oye ${nameLower}`) ||
@@ -617,6 +618,19 @@ export function VoiceAssistantProvider({ children }: { children: React.ReactNode
         clearSession(aiSessionRef.current, freshPrompt);
       } else {
         aiSessionRef.current = createSession(freshPrompt);
+      }
+
+      // If the utterance is purely a wake word / greeting (e.g. "ey bernando", "ey bernardo", "hola bernardo", "ey mesa")
+      const strippedWake = cmdLower
+        .replace(/^(ey|oye|hey|hola|buenas|ok)\b/gi, '')
+        .replace(/\b(bernardo|bernando|mesa|mara|asistente)\b/gi, '')
+        .replace(new RegExp(`\\b${nameLower}\\b`, 'gi'), '')
+        .replace(/[.,!?¡¿]/g, '')
+        .trim();
+
+      if (!strippedWake) {
+        reply('Dime, ¿en qué te ayudo?');
+        return;
       }
     }
 

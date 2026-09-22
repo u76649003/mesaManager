@@ -72,6 +72,8 @@ public class WakeWordService extends Service implements RecognitionListener {
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         recognitionIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        recognitionIntent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+        recognitionIntent.putExtra("android.speech.extra.DICTATION_MODE", true);
 
         tts = new TextToSpeech(getApplicationContext(), status -> {
             if (status != TextToSpeech.SUCCESS) {
@@ -114,9 +116,11 @@ public class WakeWordService extends Service implements RecognitionListener {
         });
     }
 
+    private String customName = "";
+
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) {
-            startForeground(NOTIFICATION_ID, notification("Di \"" + wakePhrase + "\" para hablar"));
+            startForeground(NOTIFICATION_ID, notification("Di \"ey bernardo\" para hablar"));
             startListening();
             return START_STICKY;
         }
@@ -149,8 +153,12 @@ public class WakeWordService extends Service implements RecognitionListener {
         }
         // ACTION_START (or restart)
         String name = intent.getStringExtra(EXTRA_NAME);
-        if (name != null && !name.trim().isEmpty()) wakePhrase = normalize("ey " + name.trim());
-        startForeground(NOTIFICATION_ID, notification("Di \"" + wakePhrase + "\" para hablar"));
+        if (name != null && !name.trim().isEmpty()) {
+            customName = normalize(name.trim());
+            wakePhrase = "ey " + customName;
+        }
+        String displayPhrase = customName.isEmpty() ? "ey bernardo / ey mesa" : "ey " + customName;
+        startForeground(NOTIFICATION_ID, notification("Di \"" + displayPhrase + "\" para hablar"));
         stopping = false;
         startListening();
         return START_STICKY;
@@ -224,27 +232,103 @@ public class WakeWordService extends Service implements RecognitionListener {
     @Override public void onEndOfSpeech() {}
     @Override public void onEvent(int t, Bundle p) {}
 
+    private static class WakeMatch {
+        final int startIndex;
+        final int endIndex;
+        final String matchedTrigger;
+
+        WakeMatch(int start, int end, String trigger) {
+            this.startIndex = start;
+            this.endIndex = end;
+            this.matchedTrigger = trigger;
+        }
+    }
+
+    private WakeMatch findWakeTrigger(String phrase) {
+        if (phrase == null || phrase.isBlank()) return null;
+        String p = normalize(phrase);
+
+        java.util.List<String> targetNames = new java.util.ArrayList<>();
+        if (customName != null && !customName.isEmpty()) {
+            targetNames.add(customName);
+        }
+        // Always include Bernardo/Bernando variants and fallbacks
+        if (!targetNames.contains("bernando")) targetNames.add("bernando");
+        if (!targetNames.contains("bernardo")) targetNames.add("bernardo");
+        if (!targetNames.contains("fernando")) targetNames.add("fernando");
+        if (!targetNames.contains("mesa")) targetNames.add("mesa");
+        if (!targetNames.contains("mara")) targetNames.add("mara");
+
+        String[] prefixes = { "ey", "oye", "hey", "hola", "ok" };
+
+        // 1. Check with prefixes: "ey bernando", "oye bernardo", "ey mesa", etc.
+        for (String prefix : prefixes) {
+            for (String target : targetNames) {
+                String candidate = prefix + " " + target;
+                int idx = p.indexOf(candidate);
+                if (idx >= 0) {
+                    return new WakeMatch(idx, idx + candidate.length(), candidate);
+                }
+            }
+        }
+
+        // 2. Check prefix + generic: "ey asistente", "oye asistente"
+        for (String prefix : prefixes) {
+            String candidate = prefix + " asistente";
+            int idx = p.indexOf(candidate);
+            if (idx >= 0) {
+                return new WakeMatch(idx, idx + candidate.length(), candidate);
+            }
+        }
+
+        // 3. Check standalone names with word boundaries: "bernando ...", "bernardo ..."
+        for (String target : targetNames) {
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\\b" + java.util.regex.Pattern.quote(target) + "\\b");
+            java.util.regex.Matcher matcher = pattern.matcher(p);
+            if (matcher.find()) {
+                return new WakeMatch(matcher.start(), matcher.end(), target);
+            }
+        }
+
+        return null;
+    }
+
     private void consume(Bundle results, boolean isFinal) {
         ArrayList<String> phrases = results == null ? null : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         if (phrases == null) return;
         for (String original : phrases) {
             String phrase = normalize(original);
-            if (awaitingCommand && !phrase.isBlank()) {
-                int wi = phrase.indexOf(wakePhrase);
-                String command = wi >= 0 ? phrase.substring(wi + wakePhrase.length()).trim() : original.trim();
-                if (!command.isEmpty() && isFinal) { awaitingCommand = false; wakeAcknowledged = false; emit(command); }
+            if (phrase.isBlank()) continue;
+
+            WakeMatch match = findWakeTrigger(phrase);
+
+            if (awaitingCommand) {
+                String command = (match != null)
+                    ? phrase.substring(match.endIndex).trim()
+                    : original.trim();
+                if (!command.isEmpty() && isFinal) {
+                    awaitingCommand = false;
+                    wakeAcknowledged = false;
+                    emit(command);
+                }
                 return;
             }
-            int index = phrase.indexOf(wakePhrase);
-            if (index >= 0) {
-                String remainder = phrase.substring(index + wakePhrase.length()).trim();
+
+            if (match != null) {
+                String remainder = phrase.substring(match.endIndex).trim();
                 if (!wakeAcknowledged) {
-                    wakeAcknowledged = true; awaitingCommand = true;
+                    wakeAcknowledged = true;
+                    awaitingCommand = true;
                     promptPauseUntil = System.currentTimeMillis() + 1700;
-                    emit("__WAKE__"); updateNotification("Te escucho...");
+                    emit("__WAKE__");
+                    updateNotification("Te escucho...");
                     stopListening();
                 }
-                if (!remainder.isEmpty() && isFinal) { awaitingCommand = false; wakeAcknowledged = false; emit(remainder); }
+                if (!remainder.isEmpty() && isFinal) {
+                    awaitingCommand = false;
+                    wakeAcknowledged = false;
+                    emit(remainder);
+                }
                 return;
             }
         }
@@ -252,7 +336,7 @@ public class WakeWordService extends Service implements RecognitionListener {
 
     private void emit(String command) {
         long now = System.currentTimeMillis();
-        if (normalize(command).equals(normalize(lastCommand)) && now - lastCommandAt < DEDUP_MS) return;
+        if (!"__WAKE__".equals(command) && normalize(command).equals(normalize(lastCommand)) && now - lastCommandAt < DEDUP_MS) return;
         lastCommand = command; lastCommandAt = now;
         cancelAwaitingTimeout();
         Intent event = new Intent(ACTION_COMMAND).setPackage(getPackageName());
